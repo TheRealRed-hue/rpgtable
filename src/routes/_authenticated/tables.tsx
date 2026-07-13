@@ -78,7 +78,7 @@ function TablesPage() {
   return (
     <div className="min-h-screen w-full">
       <header className="border-b border-border/60 bg-ink-2/40 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
           <div className="flex items-center gap-3">
             <Moon className="size-5 text-primary" strokeWidth={1.25} />
             <h1 className="grimoire-title text-xl text-primary">
@@ -97,10 +97,10 @@ function TablesPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-12">
-        <div className="mb-10 flex items-end justify-between gap-6">
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+        <div className="mb-8 flex flex-col gap-4 sm:mb-10 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
           <div>
-            <h2 className="grimoire-title text-4xl">Suas Mesas</h2>
+            <h2 className="grimoire-title text-3xl sm:text-4xl">Suas Mesas</h2>
             <p className="mt-2 text-sm text-muted-foreground">
               Cada mesa é um grimório — mapas, fichas e lore num só lugar.
             </p>
@@ -108,7 +108,7 @@ function TablesPage() {
 
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button>
+              <Button className="w-full sm:w-auto">
                 <Plus className="mr-2 size-4" />
                 Nova mesa
               </Button>

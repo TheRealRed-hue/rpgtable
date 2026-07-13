@@ -34,6 +34,20 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
+  // Tracks every pointer currently down on the canvas background (by
+  // pointerId), so we can tell a one-finger pan from a two-finger pinch —
+  // Pointer Events unify mouse/touch/pen, which is what makes touch dragging
+  // work the same as desktop without a separate code path.
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{
+    initialDist: number;
+    initialScale: number;
+    /** World-space point under the pinch midpoint at gesture start — kept
+     * fixed under the fingers as they move, same idea as the wheel-zoom
+     * anchor below. */
+    wx: number;
+    wy: number;
+  } | null>(null);
 
   const [dragObj, setDragObj] = useState<{
     id: string;
@@ -43,31 +57,70 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
     origY: number;
   } | null>(null);
 
-  // Pan handling on canvas background
-  const onMouseDown = (e: React.MouseEvent) => {
+  // Pan (one finger/mouse) + pinch-zoom (two fingers) on canvas background
+  const onPointerDown = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).dataset.canvasBg !== "1" && e.button !== 1) return;
-    setIsPanning(true);
-    panStart.current = { x: e.clientX, y: e.clientY, vx: viewport.x, vy: viewport.y };
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size === 2 && containerRef.current) {
+      // Second finger just touched down — switch from pan to pinch-zoom.
+      setIsPanning(false);
+      panStart.current = null;
+      const [p1, p2] = Array.from(pointersRef.current.values());
+      const rect = containerRef.current.getBoundingClientRect();
+      const midX = (p1.x + p2.x) / 2 - rect.left;
+      const midY = (p1.y + p2.y) / 2 - rect.top;
+      pinchRef.current = {
+        initialDist: Math.hypot(p1.x - p2.x, p1.y - p2.y) || 1,
+        initialScale: viewport.scale,
+        wx: (midX - viewport.x) / viewport.scale,
+        wy: (midY - viewport.y) / viewport.scale,
+      };
+    } else if (pointersRef.current.size === 1) {
+      setIsPanning(true);
+      panStart.current = { x: e.clientX, y: e.clientY, vx: viewport.x, vy: viewport.y };
+    }
   };
 
   useEffect(() => {
-    if (!isPanning) return;
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: PointerEvent) => {
+      if (pointersRef.current.has(e.pointerId)) {
+        pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+
+      if (pinchRef.current && pointersRef.current.size === 2 && containerRef.current) {
+        const [p1, p2] = Array.from(pointersRef.current.values());
+        const rect = containerRef.current.getBoundingClientRect();
+        const midX = (p1.x + p2.x) / 2 - rect.left;
+        const midY = (p1.y + p2.y) / 2 - rect.top;
+        const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y) || 1;
+        const { initialDist, initialScale, wx, wy } = pinchRef.current;
+        const newScale = Math.max(0.25, Math.min(2.5, initialScale * (dist / initialDist)));
+        setViewport({ x: midX - wx * newScale, y: midY - wy * newScale, scale: newScale });
+        return;
+      }
+
       const start = panStart.current;
-      if (!start) return;
+      if (!isPanning || !start) return;
       const dx = e.clientX - start.x;
       const dy = e.clientY - start.y;
       setViewport((v) => ({ ...v, x: start.vx + dx, y: start.vy + dy }));
     };
-    const onUp = () => {
-      setIsPanning(false);
-      panStart.current = null;
+    const onUp = (e: PointerEvent) => {
+      pointersRef.current.delete(e.pointerId);
+      if (pointersRef.current.size < 2) pinchRef.current = null;
+      if (pointersRef.current.size === 0) {
+        setIsPanning(false);
+        panStart.current = null;
+      }
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
     return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
   }, [isPanning]);
 
@@ -91,7 +144,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
 
   // Object drag
   const startObjDrag = useCallback(
-    (obj: BoardObject, e: React.MouseEvent) => {
+    (obj: BoardObject, e: React.PointerEvent) => {
       if (!isMaster || obj.locked) return;
       e.stopPropagation();
       setDragObj({
@@ -108,7 +161,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
   useEffect(() => {
     if (!dragObj) return;
     let latest: { x: number; y: number } | null = null;
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: PointerEvent) => {
       const dx = (e.clientX - dragObj.startX) / viewport.scale;
       const dy = (e.clientY - dragObj.startY) / viewport.scale;
       latest = { x: dragObj.origX + dx, y: dragObj.origY + dy };
@@ -141,11 +194,13 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
       }
       setDragObj(null);
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
     return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
   }, [dragObj, viewport.scale, onObjectMove]);
 
@@ -165,13 +220,14 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
   return (
     <div
       ref={containerRef}
-      onMouseDown={onMouseDown}
+      onPointerDown={onPointerDown}
       onWheel={onWheel}
       onDrop={onDrop}
       onDragOver={(e) => e.preventDefault()}
-      className="relative h-full w-full overflow-hidden select-none"
+      className="relative h-full w-full overflow-hidden select-none touch-none"
       style={{
         cursor: isPanning ? "grabbing" : "default",
+        touchAction: "none",
         backgroundImage:
           "radial-gradient(oklch(0.72 0.11 78 / 0.06) 1px, transparent 1px), radial-gradient(oklch(0.25 0.02 60) 1px, transparent 1px)",
         backgroundSize: `${40 * viewport.scale}px ${40 * viewport.scale}px, ${8 * viewport.scale}px ${8 * viewport.scale}px`,
@@ -254,7 +310,7 @@ function ObjectView({
 }: {
   obj: BoardObject;
   isMaster: boolean;
-  onDragStart: (obj: BoardObject, e: React.MouseEvent) => void;
+  onDragStart: (obj: BoardObject, e: React.PointerEvent) => void;
   onObjectMove?: (id: string, x: number, y: number) => void;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
@@ -344,7 +400,10 @@ function ObjectView({
   };
 
   const commonHandleProps = {
-    onMouseDown: (e: React.MouseEvent) => onDragStart(obj, e),
+    onPointerDown: (e: React.PointerEvent) => onDragStart(obj, e),
+    // Without this, mobile browsers intercept the finger-down as a page
+    // scroll/zoom gesture before our pointer handler gets a clean drag.
+    style: { touchAction: "none" as const },
   };
 
   const controls = isMaster && (

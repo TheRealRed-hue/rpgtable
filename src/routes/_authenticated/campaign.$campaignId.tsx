@@ -268,6 +268,16 @@ function CampaignPage() {
     }
   };
 
+  // Fallback for mobile: native HTML5 drag-and-drop (used by the sidebar's
+  // draggable file rows) has no touch equivalent in any mobile browser, so
+  // ArchiveSidebar calls this on tap instead of drag when isMobile is true.
+  // Reuses the same insert path as a desktop drop, just with a nudge-style
+  // default position instead of exact drop coordinates.
+  const handleAddFileFromSidebarTap = (fileId: string) => {
+    handleDropFromSidebar(fileId, 200 + Math.random() * 200, 200 + Math.random() * 200);
+    setSidebarOpenMobile(false);
+  };
+
   const copyInvite = () => {
     navigator.clipboard.writeText(`${window.location.origin}/campaign/${campaignId}`);
     toast.success(
@@ -465,6 +475,8 @@ function CampaignPage() {
             folders={folders}
             files={files}
             isMaster={isMaster}
+            isMobile={isMobile}
+            onAddFile={handleAddFileFromSidebarTap}
           />
         </div>
       </div>

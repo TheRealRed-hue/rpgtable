@@ -31,6 +31,11 @@ interface Props {
   folders: Folder[];
   files: FileRow[];
   isMaster: boolean;
+  /** Native HTML5 drag-and-drop (draggable/dataTransfer) has no touch
+   * equivalent in any mobile browser, so on mobile we fall back to
+   * tap-to-add instead of drag-to-drop. */
+  isMobile?: boolean;
+  onAddFile?: (fileId: string) => void;
 }
 
 // Uploads land in a shared Storage bucket and are later rendered as <img>
@@ -54,7 +59,14 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-export function ArchiveSidebar({ campaignId, folders, files, isMaster }: Props) {
+export function ArchiveSidebar({
+  campaignId,
+  folders,
+  files,
+  isMaster,
+  isMobile = false,
+  onAddFile,
+}: Props) {
   const qc = useQueryClient();
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -344,6 +356,8 @@ export function ArchiveSidebar({ campaignId, folders, files, isMaster }: Props) 
               onDeleteFolder={(id) => deleteItem("folder", id)}
               onDeleteFile={(id) => deleteItem("file", id)}
               onDragFile={onDragFile}
+              isMobile={isMobile}
+              onAddFile={onAddFile}
               depth={0}
             />
           ))}
@@ -354,6 +368,8 @@ export function ArchiveSidebar({ campaignId, folders, files, isMaster }: Props) 
               isMaster={isMaster}
               onDelete={() => deleteItem("file", f.id)}
               onDragFile={onDragFile}
+              isMobile={isMobile}
+              onAddFile={onAddFile}
               depth={0}
             />
           ))}
@@ -405,6 +421,8 @@ function FolderNode({
   onDeleteFolder,
   onDeleteFile,
   onDragFile,
+  isMobile = false,
+  onAddFile,
   depth,
 }: {
   folder: Folder;
@@ -416,6 +434,8 @@ function FolderNode({
   onDeleteFolder: (id: string) => void;
   onDeleteFile: (id: string) => void;
   onDragFile: (e: React.DragEvent, fileId: string) => void;
+  isMobile?: boolean;
+  onAddFile?: (fileId: string) => void;
   depth: number;
 }) {
   const isOpen = open[folder.id] ?? true;
@@ -471,6 +491,8 @@ function FolderNode({
               onDeleteFolder={onDeleteFolder}
               onDeleteFile={onDeleteFile}
               onDragFile={onDragFile}
+              isMobile={isMobile}
+              onAddFile={onAddFile}
               depth={depth + 1}
             />
           ))}
@@ -481,6 +503,8 @@ function FolderNode({
               isMaster={isMaster}
               onDelete={() => onDeleteFile(f.id)}
               onDragFile={onDragFile}
+              isMobile={isMobile}
+              onAddFile={onAddFile}
               depth={depth + 1}
             />
           ))}
@@ -495,22 +519,29 @@ function FileNode({
   isMaster,
   onDelete,
   onDragFile,
+  isMobile = false,
+  onAddFile,
   depth,
 }: {
   file: FileRow;
   isMaster: boolean;
   onDelete: () => void;
   onDragFile: (e: React.DragEvent, fileId: string) => void;
+  isMobile?: boolean;
+  onAddFile?: (fileId: string) => void;
   depth: number;
 }) {
   const glyph = file.kind === "image" || file.kind === "map" ? "✧" : "❦";
   return (
     <div
-      draggable
-      onDragStart={(e) => onDragFile(e, file.id)}
-      className="group flex cursor-grab items-center gap-2 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-primary/5 hover:text-primary"
+      draggable={!isMobile}
+      onDragStart={isMobile ? undefined : (e) => onDragFile(e, file.id)}
+      onClick={isMobile ? () => onAddFile?.(file.id) : undefined}
+      className={`group flex items-center gap-2 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-primary/5 hover:text-primary ${
+        isMobile ? "cursor-pointer active:bg-primary/10" : "cursor-grab"
+      }`}
       style={{ paddingLeft: 8 + depth * 12 + 12 }}
-      title="Arraste para a mesa"
+      title={isMobile ? "Toque para adicionar à mesa" : "Arraste para a mesa"}
     >
       <span aria-hidden="true" className="text-primary/60">
         {glyph}
@@ -518,7 +549,10 @@ function FileNode({
       <span className="flex-1 truncate">{file.name}</span>
       {isMaster && (
         <button
-          onClick={onDelete}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
           aria-label={`Remover ${file.name}`}
           className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
         >
