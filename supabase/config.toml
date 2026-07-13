@@ -1,0 +1,55 @@
+project_id = "btxrdoszavplrubqmrfz"
+
+# ---------------------------------------------------------------------------
+# Local development stack (used by `supabase start`, NOT by the hosted
+# project). Ports below are the Supabase CLI defaults — confirm with
+# `supabase status` after starting, since they can be remapped in Docker.
+# See docs/LOCAL_SUPABASE.md for the full setup walkthrough.
+# ---------------------------------------------------------------------------
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+# Local mail catcher (Inbucket/Mailpit depending on CLI version) — lets you
+# read signup confirmation emails in a browser at http://127.0.0.1:54324
+# instead of them going to a real inbox, and without touching the hosted
+# project's very limited email quota.
+[inbucket]
+enabled = true
+port = 54324
+
+[auth]
+enabled = true
+# Update these to match wherever `npm run dev` actually serves the app —
+# check the terminal output for the real port.
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["http://127.0.0.1:3000", "http://localhost:3000"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+
+# The hosted project's default auth rate limits are meant for production
+# traffic, not for a dev loop of "sign up, check email, sign in, repeat"
+# dozens of times an hour — that's exactly what was producing 429s. These
+# limits only apply to the LOCAL stack, where hammering them is harmless.
+[auth.rate_limit]
+sign_in_sign_ups = 1000
+token_refresh = 1000
+token_verifications = 1000
+email_sent = 1000
+anonymous_users = 1000
