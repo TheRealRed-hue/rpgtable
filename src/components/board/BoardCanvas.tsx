@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { BoardObject } from "@/lib/board-types";
 import { supabase } from "@/integrations/supabase/client";
-import { Lock, Unlock, Eye, EyeOff, X, Move } from "lucide-react";
+import { Lock, Unlock, Eye, EyeOff, X, Move, ChevronsUp, ChevronsDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -257,6 +257,22 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
 
   const resetView = () => setViewport({ x: 0, y: 0, scale: 1 });
 
+  // Bring-to-front / send-to-back for overlapping objects. Rather than
+  // renumbering everything, just push past whatever the current extreme
+  // z_index is — cheap, and the sort in the render below only cares about
+  // relative order, not the actual numbers.
+  const reorderObject = async (obj: BoardObject, dir: "front" | "back") => {
+    const zs = objects.map((o) => o.z_index);
+    const nextZ = dir === "front" ? Math.max(0, ...zs) + 1 : Math.min(0, ...zs) - 1;
+    if (nextZ === obj.z_index) return;
+    const { error } = await supabase
+      .from("board_objects")
+      .update({ z_index: nextZ })
+      .eq("id", obj.id);
+    if (error) toast.error("Não foi possível reordenar: " + error.message);
+  };
+
+
   return (
     <div
       ref={containerRef}
@@ -292,6 +308,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
               isMaster={isMaster}
               onDragStart={startObjDrag}
               onObjectMove={onObjectMove}
+              onReorder={reorderObject}
               isDragging={dragObj?.id === o.id}
             />
           ))}
@@ -348,12 +365,14 @@ function ObjectView({
   isMaster,
   onDragStart,
   onObjectMove,
+  onReorder,
   isDragging = false,
 }: {
   obj: BoardObject;
   isMaster: boolean;
   onDragStart: (obj: BoardObject, e: React.PointerEvent) => void;
   onObjectMove?: (id: string, x: number, y: number) => void;
+  onReorder: (obj: BoardObject, dir: "front" | "back") => void;
   isDragging?: boolean;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
@@ -474,6 +493,22 @@ function ObjectView({
         ) : (
           <EyeOff className="size-3.5" aria-hidden="true" />
         )}
+      </button>
+      <button
+        onClick={() => onReorder(obj, "back")}
+        aria-label="Mandar para trás"
+        title="Mandar para trás (sobreposição)"
+        className="grid h-7 w-7 place-items-center rounded bg-ink-2/95 ring-1 ring-primary/25 text-primary hover:bg-primary/20"
+      >
+        <ChevronsDown className="size-3.5" aria-hidden="true" />
+      </button>
+      <button
+        onClick={() => onReorder(obj, "front")}
+        aria-label="Trazer para frente"
+        title="Trazer para frente (sobreposição)"
+        className="grid h-7 w-7 place-items-center rounded bg-ink-2/95 ring-1 ring-primary/25 text-primary hover:bg-primary/20"
+      >
+        <ChevronsUp className="size-3.5" aria-hidden="true" />
       </button>
       <button
         onClick={removeObject}

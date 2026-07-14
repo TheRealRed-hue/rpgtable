@@ -128,13 +128,63 @@ export function ArchiveSidebar({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Deleting a file only removes the `files` row — board_objects.file_id is
+  // ON DELETE SET NULL, not CASCADE, and each board object also keeps its
+  // own copy of storage_path in `data` (captured at drop time), completely
+  // independent of the files row. So without this, removing a file from the
+  // archive left any copy already placed on the board dangling forever
+  // (map/image kept rendering, since neither the object row nor the actual
+  // file in Storage were ever touched).
+  const deleteFilesEverywhere = async (fileIds: string[], storagePaths: (string | null)[]) => {
+    if (fileIds.length === 0) return;
+    const { error: boErr } = await supabase.from("board_objects").delete().in("file_id", fileIds);
+    if (boErr) throw new Error("Não foi possível remover da mesa: " + boErr.message);
+    const paths = storagePaths.filter((p): p is string => !!p);
+    if (paths.length > 0) {
+      // Best-effort: if this fails we still want the DB rows gone, so we
+      // don't block on it — just leaves an orphaned blob in Storage rather
+      // than a broken reference in the app.
+      await supabase.storage.from("campaign-assets").remove(paths);
+    }
+  };
+
   const deleteItem = async (kind: "folder" | "file", id: string) => {
+    try {
+      if (kind === "file") {
+        const file = files.find((f) => f.id === id);
+        await deleteFilesEverywhere([id], [file?.storage_path ?? null]);
+      } else {
+        // Collect this folder + every nested subfolder, then every file
+        // inside any of them, so a folder delete cleans up the board the
+        // same way a single-file delete now does.
+        const folderIds = new Set([id]);
+        let grew = true;
+        while (grew) {
+          grew = false;
+          for (const f of folders) {
+            if (f.parent_id && folderIds.has(f.parent_id) && !folderIds.has(f.id)) {
+              folderIds.add(f.id);
+              grew = true;
+            }
+          }
+        }
+        const filesInside = files.filter((f) => f.folder_id && folderIds.has(f.folder_id));
+        await deleteFilesEverywhere(
+          filesInside.map((f) => f.id),
+          filesInside.map((f) => f.storage_path),
+        );
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+      return;
+    }
     const table = kind === "folder" ? "folders" : "files";
     const { error } = await supabase.from(table).delete().eq("id", id);
     if (error) toast.error(error.message);
     else {
       toast.success("Removido.");
       qc.invalidateQueries({ queryKey: [kind === "folder" ? "folders" : "files", campaignId] });
+      qc.invalidateQueries({ queryKey: ["board_objects", campaignId] });
     }
   };
 
