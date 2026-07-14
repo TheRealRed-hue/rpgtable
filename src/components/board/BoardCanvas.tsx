@@ -145,7 +145,11 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
   // Object drag
   const startObjDrag = useCallback(
     (obj: BoardObject, e: React.PointerEvent) => {
-      if (!isMaster || obj.locked) return;
+      console.log("[debug] startObjDrag chamado", { objId: obj.id, isMaster, locked: obj.locked });
+      if (!isMaster || obj.locked) {
+        console.log("[debug] bloqueado por isMaster/locked");
+        return;
+      }
       e.stopPropagation();
       setDragObj({
         id: obj.id,
@@ -154,6 +158,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
         origX: obj.x,
         origY: obj.y,
       });
+      console.log("[debug] dragObj setado");
     },
     [isMaster],
   );
@@ -400,7 +405,10 @@ function ObjectView({
   };
 
   const commonHandleProps = {
-    onPointerDown: (e: React.PointerEvent) => onDragStart(obj, e),
+    onPointerDown: (e: React.PointerEvent) => {
+      console.log("[debug] pointerdown no handle", obj.id, obj.kind);
+      onDragStart(obj, e);
+    },
     // Without this, mobile browsers intercept the finger-down as a page
     // scroll/zoom gesture before our pointer handler gets a clean drag.
     style: { touchAction: "none" as const },
