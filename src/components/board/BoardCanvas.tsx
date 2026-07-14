@@ -31,6 +31,7 @@ const KEYBOARD_NUDGE_STEP_LARGE = 40;
 
 export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const worldLayerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
@@ -82,6 +83,24 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
     }
   };
 
+  // Tracks the viewport during an active pan/pinch without touching React
+  // state on every pointermove — same idea as the object-drag optimization
+  // below. Writing transform/backgroundPosition straight to the DOM avoids
+  // re-rendering every object on the board on every pixel of mouse movement,
+  // which is what was making panning feel sluggish with several objects on
+  // the scene. React state is only synced once, when the gesture ends.
+  const pendingViewportRef = useRef<Viewport | null>(null);
+
+  const applyViewportToDom = (v: Viewport) => {
+    if (worldLayerRef.current) {
+      worldLayerRef.current.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.scale})`;
+    }
+    if (containerRef.current) {
+      containerRef.current.style.backgroundSize = `${40 * v.scale}px ${40 * v.scale}px, ${8 * v.scale}px ${8 * v.scale}px`;
+      containerRef.current.style.backgroundPosition = `${v.x}px ${v.y}px`;
+    }
+  };
+
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
       if (pointersRef.current.has(e.pointerId)) {
@@ -96,7 +115,9 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
         const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y) || 1;
         const { initialDist, initialScale, wx, wy } = pinchRef.current;
         const newScale = Math.max(0.25, Math.min(2.5, initialScale * (dist / initialDist)));
-        setViewport({ x: midX - wx * newScale, y: midY - wy * newScale, scale: newScale });
+        const next = { x: midX - wx * newScale, y: midY - wy * newScale, scale: newScale };
+        pendingViewportRef.current = next;
+        applyViewportToDom(next);
         return;
       }
 
@@ -104,7 +125,9 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
       if (!isPanning || !start) return;
       const dx = e.clientX - start.x;
       const dy = e.clientY - start.y;
-      setViewport((v) => ({ ...v, x: start.vx + dx, y: start.vy + dy }));
+      const next = { x: start.vx + dx, y: start.vy + dy, scale: viewport.scale };
+      pendingViewportRef.current = next;
+      applyViewportToDom(next);
     };
     const onUp = (e: PointerEvent) => {
       pointersRef.current.delete(e.pointerId);
@@ -112,6 +135,13 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
       if (pointersRef.current.size === 0) {
         setIsPanning(false);
         panStart.current = null;
+      }
+      // Commit the final position to React state exactly once — this is
+      // what makes zoom buttons, reset-view, and everything else that reads
+      // `viewport` from state see the up-to-date value after the gesture.
+      if (pendingViewportRef.current) {
+        setViewport(pendingViewportRef.current);
+        pendingViewportRef.current = null;
       }
     };
     window.addEventListener("pointermove", onMove);
@@ -122,7 +152,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [isPanning]);
+  }, [isPanning, viewport.scale]);
 
   // Zoom with wheel. Attached natively with { passive: false } instead of
   // React's onWheel prop — React registers wheel listeners as passive by
@@ -246,6 +276,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
     >
       {/* World layer */}
       <div
+        ref={worldLayerRef}
         className="absolute left-0 top-0 origin-top-left"
         style={{
           transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
@@ -482,7 +513,7 @@ function ObjectView({
     return (
       <div
         id={`bo-${obj.id}`}
-        className="ink-bleed-in group absolute top-0 left-0"
+        className="board-object-in group absolute top-0 left-0"
         style={{ ...style, width: "auto", height: "auto" }}
       >
         {controls}
@@ -509,7 +540,7 @@ function ObjectView({
     return (
       <div
         id={`bo-${obj.id}`}
-        className="ink-bleed-in group absolute top-0 left-0 overflow-hidden parchment-surface rounded"
+        className="board-object-in group absolute top-0 left-0 overflow-hidden parchment-surface rounded"
         style={style}
       >
         {controls}
@@ -536,7 +567,7 @@ function ObjectView({
   return (
     <div
       id={`bo-${obj.id}`}
-      className="ink-bleed-in group absolute top-0 left-0 parchment-surface rounded flex flex-col"
+      className="board-object-in group absolute top-0 left-0 parchment-surface rounded flex flex-col"
       style={style}
     >
       {controls}

@@ -188,6 +188,24 @@
   animation: ink-bleed-in 0.5s cubic-bezier(0.19, 1, 0.22, 1);
 }
 
+/* Board objects position themselves via an inline `transform: translate(x,y)`
+   (and now also scale while dragging — see BoardCanvas). ink-bleed-in's
+   keyframes also drive `transform` (translateY/scale), and a CSS animation
+   fully replaces the transform property rather than composing with it — so
+   using ink-bleed-in on a board object briefly overrides its real x/y with
+   the animation's own tiny offset every time it mounts (i.e. on every page
+   reload), producing a visible "snap from near-origin to real position"
+   glitch. This variant only fades/unblurs and never touches transform, so
+   it's safe to combine with position-via-transform. */
+@keyframes board-object-in {
+  from { opacity: 0; filter: blur(2px); }
+  to   { opacity: 1; filter: blur(0); }
+}
+
+@utility board-object-in {
+  animation: board-object-in 0.4s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
 @utility scrollbar-arcane {
   scrollbar-width: thin;
   scrollbar-color: oklch(0.72 0.11 78 / 0.25) transparent;
