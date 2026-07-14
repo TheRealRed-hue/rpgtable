@@ -11,6 +11,7 @@ export type Database = {
       board_objects: {
         Row: {
           campaign_id: string;
+          character_id: string | null;
           created_at: string;
           created_by: string;
           data: Json;
@@ -31,6 +32,7 @@ export type Database = {
         };
         Insert: {
           campaign_id: string;
+          character_id?: string | null;
           created_at?: string;
           created_by: string;
           data?: Json;
@@ -51,6 +53,7 @@ export type Database = {
         };
         Update: {
           campaign_id?: string;
+          character_id?: string | null;
           created_at?: string;
           created_by?: string;
           data?: Json;
@@ -82,6 +85,108 @@ export type Database = {
             columns: ["file_id"];
             isOneToOne: false;
             referencedRelation: "files";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "board_objects_character_id_fkey";
+            columns: ["character_id"];
+            isOneToOne: false;
+            referencedRelation: "characters";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      characters: {
+        Row: {
+          campaign_id: string;
+          created_at: string;
+          id: string;
+          name: string;
+          owner_id: string;
+          portrait_path: string | null;
+          sheet: Json;
+          updated_at: string;
+          visible_to_players: boolean;
+        };
+        Insert: {
+          campaign_id: string;
+          created_at?: string;
+          id?: string;
+          name?: string;
+          owner_id: string;
+          portrait_path?: string | null;
+          sheet?: Json;
+          updated_at?: string;
+          visible_to_players?: boolean;
+        };
+        Update: {
+          campaign_id?: string;
+          created_at?: string;
+          id?: string;
+          name?: string;
+          owner_id?: string;
+          portrait_path?: string | null;
+          sheet?: Json;
+          updated_at?: string;
+          visible_to_players?: boolean;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "characters_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      dice_rolls: {
+        Row: {
+          breakdown: Json;
+          campaign_id: string;
+          character_id: string | null;
+          created_at: string;
+          formula: string;
+          id: string;
+          label: string | null;
+          roller_id: string;
+          total: number;
+        };
+        Insert: {
+          breakdown?: Json;
+          campaign_id: string;
+          character_id?: string | null;
+          created_at?: string;
+          formula: string;
+          id?: string;
+          label?: string | null;
+          roller_id: string;
+          total: number;
+        };
+        Update: {
+          breakdown?: Json;
+          campaign_id?: string;
+          character_id?: string | null;
+          created_at?: string;
+          formula?: string;
+          id?: string;
+          label?: string | null;
+          roller_id?: string;
+          total?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "dice_rolls_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "dice_rolls_character_id_fkey";
+            columns: ["character_id"];
+            isOneToOne: false;
+            referencedRelation: "characters";
             referencedColumns: ["id"];
           },
         ];

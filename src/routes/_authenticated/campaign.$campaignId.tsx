@@ -7,7 +7,8 @@ import { isMembershipConfirmed, markMembershipConfirmed } from "@/lib/membership
 import { useIsMobile } from "@/hooks/use-mobile";
 import { BoardCanvas } from "@/components/board/BoardCanvas";
 import { ArchiveSidebar } from "@/components/board/ArchiveSidebar";
-import type { BoardObject, Campaign, FileRow, Folder } from "@/lib/board-types";
+import type { BoardObject, Campaign, Character, FileRow, Folder } from "@/lib/board-types";
+import { CharacterSheetEditor } from "@/components/board/CharacterSheetEditor";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
@@ -87,6 +88,7 @@ function CampaignPage() {
   const [addPinOpen, setAddPinOpen] = useState(false);
   const [pinLabel, setPinLabel] = useState("");
   const [sidebarOpenMobile, setSidebarOpenMobile] = useState(false);
+  const [openCharacterId, setOpenCharacterId] = useState<string | null>(null);
 
   useEffect(() => {
     getLocalUser().then((user) => setUserId(user?.id ?? null));
@@ -150,6 +152,24 @@ function CampaignPage() {
     },
   });
 
+  const { data: characters = [] } = useQuery({
+    queryKey: ["characters", campaignId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("characters")
+        .select("*")
+        .eq("campaign_id", campaignId)
+        .order("name");
+      if (error) throw error;
+      return data as Character[];
+    },
+  });
+
+  const openCharacter = useMemo(
+    () => characters.find((c) => c.id === openCharacterId) ?? null,
+    [characters, openCharacterId],
+  );
+
   const { data: objects = [] } = useQuery({
     queryKey: ["board_objects", campaignId, viewAsPlayer],
     queryFn: async () => {
@@ -184,6 +204,16 @@ function CampaignPage() {
         "postgres_changes",
         { event: "*", schema: "public", table: "files", filter: `campaign_id=eq.${campaignId}` },
         () => qc.invalidateQueries({ queryKey: ["files", campaignId] }),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "characters",
+          filter: `campaign_id=eq.${campaignId}`,
+        },
+        () => qc.invalidateQueries({ queryKey: ["characters", campaignId] }),
       )
       .subscribe();
     return () => {
@@ -238,6 +268,48 @@ function CampaignPage() {
           (err instanceof Error ? err.message : String(err)),
       );
     }
+  };
+
+  // Unlike files (master-only), a player may place their own character's
+  // token — the master may place any of them (their own NPCs included).
+  const handleDropCharacterFromSidebar = async (
+    characterId: string,
+    worldX: number,
+    worldY: number,
+  ) => {
+    if (!userId) return;
+    const character = characters.find((c) => c.id === characterId);
+    if (!character) {
+      toast.error("Personagem não encontrado.");
+      return;
+    }
+    if (character.owner_id !== userId && !isMaster) {
+      toast.error("Você só pode colocar seus próprios personagens na mesa.");
+      return;
+    }
+    const { error } = await supabase.from("board_objects").insert({
+      campaign_id: campaignId,
+      kind: "sheet",
+      character_id: character.id,
+      label: character.name,
+      x: worldX,
+      y: worldY,
+      width: 220,
+      height: 140,
+      z_index: nextZIndex(objects),
+      visible_to_players: character.visible_to_players,
+      created_by: userId,
+    });
+    if (error) toast.error(error.message);
+  };
+
+  const handleAddCharacterFromSidebarTap = (characterId: string) => {
+    handleDropCharacterFromSidebar(
+      characterId,
+      200 + Math.random() * 200,
+      200 + Math.random() * 200,
+    );
+    setSidebarOpenMobile(false);
   };
 
   const addPin = async (e: React.FormEvent) => {
@@ -448,9 +520,12 @@ function CampaignPage() {
         <div className="relative flex-1 overflow-hidden">
           <BoardCanvas
             objects={objects}
+            characters={characters}
             isMaster={isMaster}
             onDropFromSidebar={handleDropFromSidebar}
+            onDropCharacterFromSidebar={handleDropCharacterFromSidebar}
             onObjectMove={handleObjectMove}
+            onOpenCharacter={(c) => setOpenCharacterId(c.id)}
           />
         </div>
 
@@ -475,12 +550,23 @@ function CampaignPage() {
             folders={folders}
             files={files}
             objects={objects}
+            characters={characters}
+            currentUserId={userId}
             isMaster={isMaster}
             isMobile={isMobile}
             onAddFile={handleAddFileFromSidebarTap}
+            onOpenCharacter={(c) => setOpenCharacterId(c.id)}
+            onAddCharacterToBoard={handleAddCharacterFromSidebarTap}
           />
         </div>
       </div>
+
+      <CharacterSheetEditor
+        campaignId={campaignId}
+        character={openCharacter}
+        onOpenChange={(open) => !open && setOpenCharacterId(null)}
+        canEdit={!!openCharacter && (openCharacter.owner_id === userId || isMaster)}
+      />
     </div>
   );
 }

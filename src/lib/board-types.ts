@@ -6,6 +6,8 @@ export type FileRow = Database["public"]["Tables"]["files"]["Row"];
 export type BoardObject = Database["public"]["Tables"]["board_objects"]["Row"];
 export type BoardKind = Database["public"]["Enums"]["board_object_kind"];
 export type FileKind = Database["public"]["Enums"]["file_kind"];
+export type Character = Database["public"]["Tables"]["characters"]["Row"];
+export type DiceRoll = Database["public"]["Tables"]["dice_rolls"]["Row"];
 
 export const FOLDER_ICONS: Record<string, string> = {
   moon: "☽",

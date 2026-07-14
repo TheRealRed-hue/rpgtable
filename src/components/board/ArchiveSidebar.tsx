@@ -1,8 +1,9 @@
 import { useState, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { Folder, FileRow, BoardObject } from "@/lib/board-types";
+import type { Folder, FileRow, BoardObject, Character } from "@/lib/board-types";
 import { FOLDER_ICONS } from "@/lib/board-types";
+import { CharacterPanel } from "@/components/board/CharacterPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -37,6 +38,7 @@ import {
   ChevronsDown,
   Eye,
   EyeOff,
+  UsersRound,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -55,6 +57,10 @@ interface Props {
    * tap-to-add instead of drag-to-drop. */
   isMobile?: boolean;
   onAddFile?: (fileId: string) => void;
+  characters?: Character[];
+  currentUserId?: string | null;
+  onOpenCharacter?: (character: Character) => void;
+  onAddCharacterToBoard?: (characterId: string) => void;
 }
 
 const KIND_GLYPH: Record<string, string> = {
@@ -109,13 +115,17 @@ export function ArchiveSidebar({
   isMaster,
   isMobile = false,
   onAddFile,
+  characters = [],
+  currentUserId = null,
+  onOpenCharacter,
+  onAddCharacterToBoard,
 }: Props) {
   const qc = useQueryClient();
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFileOpen, setNewFileOpen] = useState(false);
   const [targetParent, setTargetParent] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"archive" | "layers">("archive");
+  const [activeTab, setActiveTab] = useState<"archive" | "layers" | "characters">("archive");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Bring-to-front / send-to-back — same logic as BoardCanvas's reorderObject,
@@ -312,25 +322,34 @@ export function ArchiveSidebar({
         <p className="grimoire-title text-base italic text-foreground/80">Cloud Archive</p>
       </div>
 
-      {isMaster && (
-        <div
-          role="tablist"
-          aria-label="Painéis da mesa"
-          className="flex border-b border-primary/10"
+      <div role="tablist" aria-label="Painéis da mesa" className="flex border-b border-primary/10">
+        <button
+          role="tab"
+          aria-selected={activeTab === "archive"}
+          onClick={() => setActiveTab("archive")}
+          className={`flex flex-1 items-center justify-center gap-1.5 py-2.5 text-[11px] font-medium uppercase tracking-widest transition-colors ${
+            activeTab === "archive"
+              ? "border-b-2 border-primary text-primary"
+              : "border-b-2 border-transparent text-muted-foreground hover:text-primary"
+          }`}
         >
-          <button
-            role="tab"
-            aria-selected={activeTab === "archive"}
-            onClick={() => setActiveTab("archive")}
-            className={`flex flex-1 items-center justify-center gap-1.5 py-2.5 text-[11px] font-medium uppercase tracking-widest transition-colors ${
-              activeTab === "archive"
-                ? "border-b-2 border-primary text-primary"
-                : "border-b-2 border-transparent text-muted-foreground hover:text-primary"
-            }`}
-          >
-            <BookOpenText className="size-3.5" aria-hidden="true" />
-            Arquivo
-          </button>
+          <BookOpenText className="size-3.5" aria-hidden="true" />
+          Arquivo
+        </button>
+        <button
+          role="tab"
+          aria-selected={activeTab === "characters"}
+          onClick={() => setActiveTab("characters")}
+          className={`flex flex-1 items-center justify-center gap-1.5 py-2.5 text-[11px] font-medium uppercase tracking-widest transition-colors ${
+            activeTab === "characters"
+              ? "border-b-2 border-primary text-primary"
+              : "border-b-2 border-transparent text-muted-foreground hover:text-primary"
+          }`}
+        >
+          <UsersRound className="size-3.5" aria-hidden="true" />
+          Personagens
+        </button>
+        {isMaster && (
           <button
             role="tab"
             aria-selected={activeTab === "layers"}
@@ -344,10 +363,20 @@ export function ArchiveSidebar({
             <Layers className="size-3.5" aria-hidden="true" />
             Camadas
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
-      {activeTab === "layers" && isMaster ? (
+      {activeTab === "characters" ? (
+        <CharacterPanel
+          campaignId={campaignId}
+          characters={characters}
+          currentUserId={currentUserId}
+          isMaster={isMaster}
+          isMobile={isMobile}
+          onOpenCharacter={(c) => onOpenCharacter?.(c)}
+          onAddCharacterToBoard={onAddCharacterToBoard}
+        />
+      ) : activeTab === "layers" && isMaster ? (
         <div className="scrollbar-arcane flex-1 overflow-y-auto p-3">
           <p className="mb-3 px-1 text-[10px] leading-relaxed text-muted-foreground">
             Ordem de sobreposição da mesa — o topo da lista é o que fica na frente. Use as setas

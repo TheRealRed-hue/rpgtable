@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { BoardObject } from "@/lib/board-types";
+import type { BoardObject, Character } from "@/lib/board-types";
+import type { SheetField, NumberField, ResourceField } from "@/lib/character-sheet-types";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Lock,
@@ -28,6 +29,9 @@ interface Props {
    * confirms the update.
    */
   onObjectMove?: (id: string, x: number, y: number) => void;
+  characters?: Character[];
+  onDropCharacterFromSidebar?: (characterId: string, worldX: number, worldY: number) => void;
+  onOpenCharacter?: (character: Character) => void;
 }
 
 interface Viewport {
@@ -46,7 +50,15 @@ const KEYBOARD_NUDGE_STEP_LARGE = 40;
 // on top of it without any extra transform math.
 const GRID_CELL_PX = 60;
 
-export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove }: Props) {
+export function BoardCanvas({
+  objects,
+  isMaster,
+  onDropFromSidebar,
+  onObjectMove,
+  characters = [],
+  onDropCharacterFromSidebar,
+  onOpenCharacter,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const worldLayerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
@@ -274,12 +286,18 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
   // Drop from sidebar
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const fileId = e.dataTransfer.getData("text/file-id");
-    if (!fileId || !containerRef.current) return;
+    if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const wx = (e.clientX - rect.left - viewport.x) / viewport.scale;
     const wy = (e.clientY - rect.top - viewport.y) / viewport.scale;
-    onDropFromSidebar(fileId, wx, wy);
+
+    const characterId = e.dataTransfer.getData("text/character-id");
+    if (characterId) {
+      onDropCharacterFromSidebar?.(characterId, wx, wy);
+      return;
+    }
+    const fileId = e.dataTransfer.getData("text/file-id");
+    if (fileId) onDropFromSidebar(fileId, wx, wy);
   };
 
   const resetView = () => setViewport({ x: 0, y: 0, scale: 1 });
@@ -353,6 +371,8 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
               onReorder={reorderObject}
               isDragging={dragObj?.id === o.id}
               showGrid={showGrid}
+              characters={characters}
+              onOpenCharacter={onOpenCharacter}
             />
           ))}
 
@@ -429,6 +449,8 @@ function ObjectView({
   onReorder,
   isDragging = false,
   showGrid = false,
+  characters = [],
+  onOpenCharacter,
 }: {
   obj: BoardObject;
   isMaster: boolean;
@@ -437,6 +459,8 @@ function ObjectView({
   onReorder: (obj: BoardObject, dir: "front" | "back") => void;
   isDragging?: boolean;
   showGrid?: boolean;
+  characters?: Character[];
+  onOpenCharacter?: (character: Character) => void;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
 
@@ -668,7 +692,57 @@ function ObjectView({
     );
   }
 
-  // document / sheet — parchment card
+  // sheet — real character preview, clickable to open the full editor
+  if (obj.kind === "sheet") {
+    const character = characters.find((c) => c.id === obj.character_id);
+    const fields = ((character?.sheet as unknown as SheetField[]) ?? []).filter(
+      (f) => f.type === "number" || f.type === "resource",
+    ) as (NumberField | ResourceField)[];
+    return (
+      <div
+        id={`bo-${obj.id}`}
+        className="board-object-in group absolute top-0 left-0 parchment-surface rounded flex flex-col"
+        style={style}
+      >
+        {controls}
+        <div
+          {...commonHandleProps}
+          onClick={() => character && onOpenCharacter?.(character)}
+          className="flex flex-1 cursor-pointer flex-col gap-1.5 px-4 py-3"
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && character) onOpenCharacter?.(character);
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <span className="grimoire-title truncate text-base text-ink">
+              {character?.name ?? obj.label ?? "Ficha"}
+            </span>
+            <span className="text-[9px] uppercase tracking-widest text-ink/50">Ficha</span>
+          </div>
+          {!character ? (
+            <span className="text-xs italic text-ink/40">Personagem removido.</span>
+          ) : fields.length === 0 ? (
+            <span className="text-xs italic text-ink/40">Sem atributos ainda — clique para editar.</span>
+          ) : (
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-ink/80">
+              {fields.slice(0, 4).map((f) => (
+                <div key={f.id} className="flex items-center justify-between">
+                  <span className="truncate text-ink/60">{f.label}</span>
+                  <span className="font-semibold">
+                    {f.type === "resource" ? `${f.value}/${f.max}` : f.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // document — parchment card
   const content = ((obj.data ?? {}) as { content?: string }).content ?? "";
   return (
     <div
@@ -684,9 +758,7 @@ function ObjectView({
         <span className="grimoire-title text-base text-ink truncate">
           {obj.label ?? "Documento"}
         </span>
-        <span className="text-[9px] uppercase tracking-widest text-ink/50">
-          {obj.kind === "sheet" ? "Ficha" : "Pergaminho"}
-        </span>
+        <span className="text-[9px] uppercase tracking-widest text-ink/50">Pergaminho</span>
       </div>
       <div className="scrollbar-arcane grimoire-title flex-1 overflow-auto whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed text-ink/90">
         {content || <span className="italic text-ink/40">Este pergaminho está em branco.</span>}
