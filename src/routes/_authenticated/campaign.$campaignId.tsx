@@ -474,6 +474,7 @@ function CampaignPage() {
             campaignId={campaignId}
             folders={folders}
             files={files}
+            objects={objects}
             isMaster={isMaster}
             isMobile={isMobile}
             onAddFile={handleAddFileFromSidebarTap}

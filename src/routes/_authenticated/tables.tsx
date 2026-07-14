@@ -16,8 +16,28 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { BookOpenText, Plus, Moon, LogOut, Loader2, Users, Crown } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
+import { BookOpenText, Plus, Moon, LogOut, Loader2, Users, Crown, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+
+/** Shape actually returned by the campaigns list query below — narrower than
+ * the full `Campaign` row type (no `updated_at`), which is all the delete
+ * flow needs. */
+type CampaignCard = {
+  id: string;
+  name: string;
+  description: string | null;
+  owner_id: string;
+  created_at: string;
+};
 
 export const Route = createFileRoute("/_authenticated/tables")({
   component: TablesPage,
@@ -68,6 +88,42 @@ function TablesPage() {
       navigate({ to: "/campaign/$campaignId", params: { campaignId: created.id } });
     },
     onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Two-step destructive flow: a first "are you sure" step, then a second
+  // step that requires typing the exact campaign name before the delete
+  // button unlocks. DB-side, campaign_members/folders/files/board_objects
+  // all cascade off campaigns.id — the only thing that doesn't cascade is
+  // the actual blobs in Storage (files just holds a storage_path, same as
+  // the single-file delete path in ArchiveSidebar), so we sweep those first.
+  const [deleteTarget, setDeleteTarget] = useState<CampaignCard | null>(null);
+  const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
+  const [confirmText, setConfirmText] = useState("");
+
+  const closeDeleteDialog = () => {
+    setDeleteTarget(null);
+    setDeleteStep(1);
+    setConfirmText("");
+  };
+
+  const deleteMutation = useMutation({
+    mutationFn: async (campaign: CampaignCard) => {
+      const { data: objects } = await supabase.storage
+        .from("campaign-assets")
+        .list(campaign.id, { limit: 1000 });
+      if (objects && objects.length > 0) {
+        const paths = objects.map((o) => `${campaign.id}/${o.name}`);
+        await supabase.storage.from("campaign-assets").remove(paths);
+      }
+      const { error } = await supabase.from("campaigns").delete().eq("id", campaign.id);
+      if (error) throw error;
+    },
+    onSuccess: (_data, campaign) => {
+      toast.success(`"${campaign.name}" foi apagada para sempre.`);
+      closeDeleteDialog();
+      qc.invalidateQueries({ queryKey: ["campaigns"] });
+    },
+    onError: (e: Error) => toast.error("Não foi possível apagar a mesa: " + e.message),
   });
 
   const signOut = async () => {
@@ -186,7 +242,26 @@ function TablesPage() {
                 >
                   <div className="mb-4 flex items-start justify-between">
                     <BookOpenText className="size-6 text-primary" strokeWidth={1.25} />
-                    {isOwner && <Crown className="size-4 text-gold-muted" strokeWidth={1.25} />}
+                    <div className="flex items-center gap-2">
+                      {isOwner && <Crown className="size-4 text-gold-muted" strokeWidth={1.25} />}
+                      {isOwner && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDeleteTarget(c);
+                            setDeleteStep(1);
+                            setConfirmText("");
+                          }}
+                          aria-label={`Apagar mesa ${c.name}`}
+                          title="Apagar mesa"
+                          className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
+                        >
+                          <Trash2 className="size-4" aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <h3 className="grimoire-title text-xl text-foreground group-hover:text-primary transition-colors">
                     {c.name}
@@ -214,6 +289,79 @@ function TablesPage() {
           </div>
         )}
       </main>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) closeDeleteDialog();
+        }}
+      >
+        <AlertDialogContent className="gold-frame">
+          {deleteTarget && deleteStep === 1 && (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle className="grimoire-title text-primary">
+                  Apagar "{deleteTarget.name}"?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  Todos os mapas, fichas, pastas e pergaminhos dessa mesa serão perdidos para sempre
+                  — jogadores, mestre, tudo. Essa ação não pode ser desfeita.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel onClick={closeDeleteDialog}>Cancelar</AlertDialogCancel>
+                <Button variant="destructive" onClick={() => setDeleteStep(2)}>
+                  Continuar
+                </Button>
+              </AlertDialogFooter>
+            </>
+          )}
+
+          {deleteTarget && deleteStep === 2 && (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle className="grimoire-title text-primary">
+                  Confirme para apagar
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  Para confirmar, digite o nome exato da mesa:{" "}
+                  <span className="font-semibold text-foreground">{deleteTarget.name}</span>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <div className="space-y-2">
+                <Label htmlFor="confirm-name" className="sr-only">
+                  Nome da mesa
+                </Label>
+                <Input
+                  id="confirm-name"
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  placeholder={deleteTarget.name}
+                  autoFocus
+                  autoComplete="off"
+                />
+              </div>
+              <AlertDialogFooter>
+                <AlertDialogCancel onClick={closeDeleteDialog}>Cancelar</AlertDialogCancel>
+                <Button
+                  variant="destructive"
+                  disabled={confirmText !== deleteTarget.name || deleteMutation.isPending}
+                  onClick={() => deleteMutation.mutate(deleteTarget)}
+                >
+                  {deleteMutation.isPending ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                      <span className="sr-only">Apagando…</span>
+                    </>
+                  ) : (
+                    "Apagar definitivamente"
+                  )}
+                </Button>
+              </AlertDialogFooter>
+            </>
+          )}
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
