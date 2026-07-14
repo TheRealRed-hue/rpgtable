@@ -59,7 +59,6 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
 
   // Pan (one finger/mouse) + pinch-zoom (two fingers) on canvas background
   const onPointerDown = (e: React.PointerEvent) => {
-    console.error("[debug] pointerdown no container, target:", e.target, "canvasBg:", (e.target as HTMLElement).dataset.canvasBg);
     if ((e.target as HTMLElement).dataset.canvasBg !== "1" && e.button !== 1) return;
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -146,9 +145,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
   // Object drag
   const startObjDrag = useCallback(
     (obj: BoardObject, e: React.PointerEvent) => {
-      console.error("[debug] startObjDrag chamado", { objId: obj.id, isMaster, locked: obj.locked });
       if (!isMaster || obj.locked) {
-        console.error("[debug] bloqueado por isMaster/locked");
         return;
       }
       e.stopPropagation();
@@ -159,7 +156,6 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
         origX: obj.x,
         origY: obj.y,
       });
-      console.error("[debug] dragObj setado");
     },
     [isMaster],
   );
@@ -168,7 +164,6 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
     if (!dragObj) return;
     let latest: { x: number; y: number } | null = null;
     const onMove = (e: PointerEvent) => {
-      console.error("[debug] pointermove durante drag", e.clientX, e.clientY);
       const dx = (e.clientX - dragObj.startX) / viewport.scale;
       const dy = (e.clientY - dragObj.startY) / viewport.scale;
       latest = { x: dragObj.origX + dx, y: dragObj.origY + dy };
@@ -410,10 +405,7 @@ function ObjectView({
   };
 
   const commonHandleProps = {
-    onPointerDown: (e: React.PointerEvent) => {
-      console.error("[debug] pointerdown no handle", obj.id, obj.kind);
-      onDragStart(obj, e);
-    },
+    onPointerDown: (e: React.PointerEvent) => onDragStart(obj, e),
     // Without this, mobile browsers intercept the finger-down as a page
     // scroll/zoom gesture before our pointer handler gets a clean drag.
     style: { touchAction: "none" as const },

@@ -178,7 +178,14 @@
 }
 
 @utility ink-bleed-in {
-  animation: ink-bleed-in 0.5s cubic-bezier(0.19, 1, 0.22, 1) both;
+  /* No fill-mode: this is a one-shot mount animation. With "both"/"forwards"
+     the browser keeps the animation's ending transform pinned at a higher
+     cascade priority than any inline style — permanently, forever — which
+     silently ate every transform we tried to set afterwards (dragging,
+     scale-on-drag, etc). Without a fill-mode, once the 0.5s is over, normal
+     inline styles (position, drag transforms) take over again as expected.
+     There's no animation-delay here, so we don't need "backwards" either. */
+  animation: ink-bleed-in 0.5s cubic-bezier(0.19, 1, 0.22, 1);
 }
 
 @utility scrollbar-arcane {
