@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { BoardObject } from "@/lib/board-types";
 import { supabase } from "@/integrations/supabase/client";
-import { Lock, Unlock, Eye, EyeOff, X, Move, ChevronsUp, ChevronsDown } from "lucide-react";
+import {
+  Lock,
+  Unlock,
+  Eye,
+  EyeOff,
+  X,
+  Move,
+  ChevronsUp,
+  ChevronsDown,
+  Grid3x3,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -29,10 +39,18 @@ interface Viewport {
 const KEYBOARD_NUDGE_STEP = 10;
 const KEYBOARD_NUDGE_STEP_LARGE = 40;
 
+// Tactical movement grid — one square (slot) is defined as 1.5m, the
+// standard combat-square size in systems like Ordem Paranormal. The value
+// here is in world px at 100% zoom; it lives in world space (a child of
+// worldLayerRef) so it pans/zooms in perfect sync with the objects sitting
+// on top of it without any extra transform math.
+const GRID_CELL_PX = 60;
+
 export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const worldLayerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
+  const [showGrid, setShowGrid] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   // Tracks every pointer currently down on the canvas background (by
@@ -215,7 +233,16 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
     };
     const onUp = async () => {
       if (latest) {
-        const { x, y } = latest;
+        // Snap to the nearest grid intersection when the movement grid is
+        // on, so a drag always lands cleanly on a slot instead of some
+        // fractional pixel offset — that's what makes counting slots for
+        // movement (1 slot = 1.5m) actually work.
+        const { x, y } = showGrid
+          ? {
+              x: Math.round(latest.x / GRID_CELL_PX) * GRID_CELL_PX,
+              y: Math.round(latest.y / GRID_CELL_PX) * GRID_CELL_PX,
+            }
+          : latest;
         // Optimistically patch the cache immediately so that if anything
         // else triggers a re-render before Supabase confirms the write, the
         // object doesn't flash back to its pre-drag position.
@@ -242,7 +269,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [dragObj, viewport.scale, onObjectMove]);
+  }, [dragObj, viewport.scale, onObjectMove, showGrid]);
 
   // Drop from sidebar
   const onDrop = (e: React.DragEvent) => {
@@ -272,7 +299,6 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
     if (error) toast.error("Não foi possível reordenar: " + error.message);
   };
 
-
   return (
     <div
       ref={containerRef}
@@ -298,6 +324,22 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
           transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
         }}
       >
+        {showGrid && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute"
+            style={{
+              left: -3000,
+              top: -3000,
+              width: 6000,
+              height: 6000,
+              backgroundImage:
+                "linear-gradient(to right, oklch(0.72 0.11 78 / 0.22) 1px, transparent 1px), linear-gradient(to bottom, oklch(0.72 0.11 78 / 0.22) 1px, transparent 1px)",
+              backgroundSize: `${GRID_CELL_PX}px ${GRID_CELL_PX}px`,
+            }}
+          />
+        )}
+
         {objects
           .slice()
           .sort((a, b) => a.z_index - b.z_index)
@@ -310,6 +352,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
               onObjectMove={onObjectMove}
               onReorder={reorderObject}
               isDragging={dragObj?.id === o.id}
+              showGrid={showGrid}
             />
           ))}
 
@@ -329,6 +372,24 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
         aria-label="Controles de zoom"
         className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full bg-ink-2/90 p-1.5 ring-1 ring-primary/25 backdrop-blur-md shadow-xl"
       >
+        {isMaster && (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={showGrid ? "Ocultar grade de movimento" : "Mostrar grade de movimento"}
+              aria-pressed={showGrid}
+              title="Grade de movimento — 1 quadrado = 1,5m"
+              className={`h-8 w-8 p-0 hover:bg-primary/10 ${
+                showGrid ? "text-primary bg-primary/15" : "text-primary/70"
+              }`}
+              onClick={() => setShowGrid((v) => !v)}
+            >
+              <Grid3x3 className="size-4" aria-hidden="true" />
+            </Button>
+            <div className="h-4 w-px bg-primary/15" aria-hidden="true" />
+          </>
+        )}
         <Button
           size="sm"
           variant="ghost"
@@ -367,6 +428,7 @@ function ObjectView({
   onObjectMove,
   onReorder,
   isDragging = false,
+  showGrid = false,
 }: {
   obj: BoardObject;
   isMaster: boolean;
@@ -374,6 +436,7 @@ function ObjectView({
   onObjectMove?: (id: string, x: number, y: number) => void;
   onReorder: (obj: BoardObject, dir: "front" | "back") => void;
   isDragging?: boolean;
+  showGrid?: boolean;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
 
@@ -439,7 +502,9 @@ function ObjectView({
   };
 
   // Keyboard alternative to mouse-drag repositioning (accessibility): arrow
-  // keys nudge the object; holding Shift moves it in larger steps.
+  // keys nudge the object; holding Shift moves it in larger steps. When the
+  // movement grid is on, a nudge moves exactly one slot (1.5m) instead, so
+  // arrow-key movement counts cleanly too — Shift then moves two slots.
   const nudge = async (e: React.KeyboardEvent) => {
     const stepMap: Record<string, [number, number]> = {
       ArrowUp: [0, -1],
@@ -450,7 +515,13 @@ function ObjectView({
     const dir = stepMap[e.key];
     if (!dir) return;
     e.preventDefault();
-    const step = e.shiftKey ? KEYBOARD_NUDGE_STEP_LARGE : KEYBOARD_NUDGE_STEP;
+    const step = showGrid
+      ? e.shiftKey
+        ? GRID_CELL_PX * 2
+        : GRID_CELL_PX
+      : e.shiftKey
+        ? KEYBOARD_NUDGE_STEP_LARGE
+        : KEYBOARD_NUDGE_STEP;
     const x = obj.x + dir[0] * step;
     const y = obj.y + dir[1] * step;
     onObjectMove?.(obj.id, x, y);
