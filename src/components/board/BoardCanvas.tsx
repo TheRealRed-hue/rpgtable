@@ -168,6 +168,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
     if (!dragObj) return;
     let latest: { x: number; y: number } | null = null;
     const onMove = (e: PointerEvent) => {
+      console.error("[debug] pointermove durante drag", e.clientX, e.clientY);
       const dx = (e.clientX - dragObj.startX) / viewport.scale;
       const dy = (e.clientY - dragObj.startY) / viewport.scale;
       latest = { x: dragObj.origX + dx, y: dragObj.origY + dy };
@@ -176,7 +177,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
       // mousemove, which matters once a scene has many objects on it.
       const el = document.getElementById(`bo-${dragObj.id}`);
       if (el) {
-        el.style.transform = `translate(${latest.x}px, ${latest.y}px)`;
+        el.style.transform = `translate(${latest.x}px, ${latest.y}px) scale(1.03)`;
       }
     };
     const onUp = async () => {
@@ -258,6 +259,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
               isMaster={isMaster}
               onDragStart={startObjDrag}
               onObjectMove={onObjectMove}
+              isDragging={dragObj?.id === o.id}
             />
           ))}
 
@@ -313,11 +315,13 @@ function ObjectView({
   isMaster,
   onDragStart,
   onObjectMove,
+  isDragging = false,
 }: {
   obj: BoardObject;
   isMaster: boolean;
   onDragStart: (obj: BoardObject, e: React.PointerEvent) => void;
   onObjectMove?: (id: string, x: number, y: number) => void;
+  isDragging?: boolean;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
 
@@ -465,11 +469,13 @@ function ObjectView({
   );
 
   const style: React.CSSProperties = {
-    transform: `translate(${obj.x}px, ${obj.y}px)`,
+    transform: `translate(${obj.x}px, ${obj.y}px)${isDragging ? " scale(1.03)" : ""}`,
     width: obj.width,
     height: obj.kind === "pin" ? undefined : obj.height,
-    zIndex: obj.z_index,
+    zIndex: isDragging ? 9999 : obj.z_index,
     opacity: !obj.visible_to_players && isMaster ? 0.55 : 1,
+    boxShadow: isDragging ? "0 12px 28px -8px oklch(0 0 0 / 0.55)" : undefined,
+    transition: isDragging ? "none" : "box-shadow 120ms ease",
   };
 
   // Render by kind
