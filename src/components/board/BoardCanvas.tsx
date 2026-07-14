@@ -59,6 +59,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
 
   // Pan (one finger/mouse) + pinch-zoom (two fingers) on canvas background
   const onPointerDown = (e: React.PointerEvent) => {
+    console.error("[debug] pointerdown no container, target:", e.target, "canvasBg:", (e.target as HTMLElement).dataset.canvasBg);
     if ((e.target as HTMLElement).dataset.canvasBg !== "1" && e.button !== 1) return;
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -145,9 +146,9 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
   // Object drag
   const startObjDrag = useCallback(
     (obj: BoardObject, e: React.PointerEvent) => {
-      console.log("[debug] startObjDrag chamado", { objId: obj.id, isMaster, locked: obj.locked });
+      console.error("[debug] startObjDrag chamado", { objId: obj.id, isMaster, locked: obj.locked });
       if (!isMaster || obj.locked) {
-        console.log("[debug] bloqueado por isMaster/locked");
+        console.error("[debug] bloqueado por isMaster/locked");
         return;
       }
       e.stopPropagation();
@@ -158,7 +159,7 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
         origX: obj.x,
         origY: obj.y,
       });
-      console.log("[debug] dragObj setado");
+      console.error("[debug] dragObj setado");
     },
     [isMaster],
   );
@@ -406,7 +407,7 @@ function ObjectView({
 
   const commonHandleProps = {
     onPointerDown: (e: React.PointerEvent) => {
-      console.log("[debug] pointerdown no handle", obj.id, obj.kind);
+      console.error("[debug] pointerdown no handle", obj.id, obj.kind);
       onDragStart(obj, e);
     },
     // Without this, mobile browsers intercept the finger-down as a page
