@@ -124,23 +124,31 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
     };
   }, [isPanning]);
 
-  // Zoom with wheel
-  const onWheel = (e: React.WheelEvent) => {
-    if (!containerRef.current) return;
-    e.preventDefault();
-    const rect = containerRef.current.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
+  // Zoom with wheel. Attached natively with { passive: false } instead of
+  // React's onWheel prop — React registers wheel listeners as passive by
+  // default (for scroll performance), which silently blocks preventDefault
+  // and spams "Unable to preventDefault inside passive event listener".
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = node.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
 
-    const delta = -e.deltaY * 0.0015;
-    const newScale = Math.max(0.25, Math.min(2.5, viewport.scale * (1 + delta)));
-    // Keep the point under cursor fixed
-    const wx = (mx - viewport.x) / viewport.scale;
-    const wy = (my - viewport.y) / viewport.scale;
-    const nx = mx - wx * newScale;
-    const ny = my - wy * newScale;
-    setViewport({ x: nx, y: ny, scale: newScale });
-  };
+      setViewport((v) => {
+        const delta = -e.deltaY * 0.0015;
+        const newScale = Math.max(0.25, Math.min(2.5, v.scale * (1 + delta)));
+        // Keep the point under cursor fixed
+        const wx = (mx - v.x) / v.scale;
+        const wy = (my - v.y) / v.scale;
+        return { x: mx - wx * newScale, y: my - wy * newScale, scale: newScale };
+      });
+    };
+    node.addEventListener("wheel", handleWheel, { passive: false });
+    return () => node.removeEventListener("wheel", handleWheel);
+  }, []);
 
   // Object drag
   const startObjDrag = useCallback(
@@ -223,7 +231,6 @@ export function BoardCanvas({ objects, isMaster, onDropFromSidebar, onObjectMove
     <div
       ref={containerRef}
       onPointerDown={onPointerDown}
-      onWheel={onWheel}
       onDrop={onDrop}
       onDragOver={(e) => e.preventDefault()}
       className="relative h-full w-full overflow-hidden select-none touch-none"
