@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { BoardObject, Character } from "@/lib/board-types";
-import type { SheetField, NumberField, ResourceField } from "@/lib/character-sheet-types";
+import { normalizeSheet, type NumberField, type ResourceField } from "@/lib/character-sheet-types";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Lock,
@@ -64,6 +64,10 @@ export function BoardCanvas({
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
   const [showGrid, setShowGrid] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
+  // Reorder/lock/visibility controls used to only reveal on :hover, which
+  // has no touch equivalent — tapping an object now selects it and keeps
+  // those controls visible until something else is tapped.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const panStart = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   // Tracks every pointer currently down on the canvas background (by
   // pointerId), so we can tell a one-finger pan from a two-finger pinch —
@@ -321,6 +325,9 @@ export function BoardCanvas({
     <div
       ref={containerRef}
       onPointerDown={onPointerDown}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) setSelectedId(null);
+      }}
       onDrop={onDrop}
       onDragOver={(e) => e.preventDefault()}
       className="relative h-full w-full overflow-hidden select-none touch-none"
@@ -373,6 +380,8 @@ export function BoardCanvas({
               showGrid={showGrid}
               characters={characters}
               onOpenCharacter={onOpenCharacter}
+              isSelected={selectedId === o.id}
+              onSelect={() => setSelectedId(o.id)}
             />
           ))}
 
@@ -451,6 +460,8 @@ function ObjectView({
   showGrid = false,
   characters = [],
   onOpenCharacter,
+  isSelected = false,
+  onSelect,
 }: {
   obj: BoardObject;
   isMaster: boolean;
@@ -461,6 +472,8 @@ function ObjectView({
   showGrid?: boolean;
   characters?: Character[];
   onOpenCharacter?: (character: Character) => void;
+  isSelected?: boolean;
+  onSelect?: () => void;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
 
@@ -558,13 +571,18 @@ function ObjectView({
 
   const commonHandleProps = {
     onPointerDown: (e: React.PointerEvent) => onDragStart(obj, e),
+    onClick: () => onSelect?.(),
     // Without this, mobile browsers intercept the finger-down as a page
     // scroll/zoom gesture before our pointer handler gets a clean drag.
     style: { touchAction: "none" as const },
   };
 
   const controls = isMaster && (
-    <div className="pointer-events-auto absolute -top-9 left-0 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+    <div
+      className={`pointer-events-auto absolute -top-9 left-0 flex gap-1 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
+        isSelected ? "opacity-100" : "opacity-0"
+      }`}
+    >
       <button
         onClick={toggleLock}
         aria-label={obj.locked ? "Destravar objeto" : "Travar objeto"}
@@ -695,19 +713,25 @@ function ObjectView({
   // sheet — real character preview, clickable to open the full editor
   if (obj.kind === "sheet") {
     const character = characters.find((c) => c.id === obj.character_id);
-    const fields = ((character?.sheet as unknown as SheetField[]) ?? []).filter(
-      (f) => f.type === "number" || f.type === "resource",
-    ) as (NumberField | ResourceField)[];
+    const fields = normalizeSheet(character?.sheet)
+      .flatMap((tab) => tab.fields)
+      .filter((f) => f.type === "number" || f.type === "resource") as (
+      | NumberField
+      | ResourceField
+    )[];
     return (
       <div
         id={`bo-${obj.id}`}
-        className="board-object-in group absolute top-0 left-0 parchment-surface rounded flex flex-col"
+        className={`board-object-in group absolute top-0 left-0 parchment-surface rounded flex flex-col ${
+          isSelected ? "ring-2 ring-primary" : ""
+        }`}
         style={style}
       >
         {controls}
         <div
           {...commonHandleProps}
-          onClick={() => character && onOpenCharacter?.(character)}
+          onClick={() => onSelect?.()}
+          onDoubleClick={() => character && onOpenCharacter?.(character)}
           className="flex flex-1 cursor-pointer flex-col gap-1.5 px-4 py-3"
           role="button"
           tabIndex={0}
@@ -724,7 +748,9 @@ function ObjectView({
           {!character ? (
             <span className="text-xs italic text-ink/40">Personagem removido.</span>
           ) : fields.length === 0 ? (
-            <span className="text-xs italic text-ink/40">Sem atributos ainda — clique para editar.</span>
+            <span className="text-xs italic text-ink/40">
+              Sem atributos ainda — toque duas vezes para editar.
+            </span>
           ) : (
             <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-ink/80">
               {fields.slice(0, 4).map((f) => (
@@ -736,6 +762,11 @@ function ObjectView({
                 </div>
               ))}
             </div>
+          )}
+          {isSelected && (
+            <span className="mt-auto text-[9px] italic text-ink/40">
+              Toque duas vezes para abrir a ficha
+            </span>
           )}
         </div>
       </div>

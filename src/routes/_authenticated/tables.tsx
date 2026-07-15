@@ -25,7 +25,7 @@ import {
   AlertDialogFooter,
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
-import { BookOpenText, Plus, Moon, LogOut, Loader2, Users, Crown, Trash2 } from "lucide-react";
+import { BookOpenText, Plus, Moon, LogOut, Loader2, Users, Crown, Trash2, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 
 /** Shape actually returned by the campaigns list query below — narrower than
@@ -141,15 +141,23 @@ function TablesPage() {
               TableLab<span className="italic opacity-80">RPG</span>
             </h1>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={signOut}
-            className="text-muted-foreground hover:text-primary"
-          >
-            <LogOut className="mr-2 size-4" />
-            Sair
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-primary">
+              <Link to="/characters">
+                <UsersRound className="mr-2 size-4" />
+                Meus Personagens
+              </Link>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={signOut}
+              className="text-muted-foreground hover:text-primary"
+            >
+              <LogOut className="mr-2 size-4" />
+              Sair
+            </Button>
+          </div>
         </div>
       </header>
 

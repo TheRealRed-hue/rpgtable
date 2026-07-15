@@ -13,6 +13,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedTablesRouteImport } from './routes/_authenticated/tables'
+import { Route as AuthenticatedCharactersRouteImport } from './routes/_authenticated/characters'
 import { Route as AuthenticatedCampaignCampaignIdRouteImport } from './routes/_authenticated/campaign.$campaignId'
 
 const AuthRoute = AuthRouteImport.update({
@@ -34,6 +35,11 @@ const AuthenticatedTablesRoute = AuthenticatedTablesRouteImport.update({
   path: '/tables',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedCharactersRoute = AuthenticatedCharactersRouteImport.update({
+  id: '/characters',
+  path: '/characters',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedCampaignCampaignIdRoute =
   AuthenticatedCampaignCampaignIdRouteImport.update({
     id: '/campaign/$campaignId',
@@ -44,12 +50,14 @@ const AuthenticatedCampaignCampaignIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/characters': typeof AuthenticatedCharactersRoute
   '/tables': typeof AuthenticatedTablesRoute
   '/campaign/$campaignId': typeof AuthenticatedCampaignCampaignIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/characters': typeof AuthenticatedCharactersRoute
   '/tables': typeof AuthenticatedTablesRoute
   '/campaign/$campaignId': typeof AuthenticatedCampaignCampaignIdRoute
 }
@@ -58,19 +66,21 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/characters': typeof AuthenticatedCharactersRoute
   '/_authenticated/tables': typeof AuthenticatedTablesRoute
   '/_authenticated/campaign/$campaignId': typeof AuthenticatedCampaignCampaignIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/tables' | '/campaign/$campaignId'
+  fullPaths: '/' | '/auth' | '/characters' | '/tables' | '/campaign/$campaignId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/tables' | '/campaign/$campaignId'
+  to: '/' | '/auth' | '/characters' | '/tables' | '/campaign/$campaignId'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/characters'
     | '/_authenticated/tables'
     | '/_authenticated/campaign/$campaignId'
   fileRoutesById: FileRoutesById
@@ -111,6 +121,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedTablesRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/characters': {
+      id: '/_authenticated/characters'
+      path: '/characters'
+      fullPath: '/characters'
+      preLoaderRoute: typeof AuthenticatedCharactersRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/campaign/$campaignId': {
       id: '/_authenticated/campaign/$campaignId'
       path: '/campaign/$campaignId'
@@ -122,11 +139,13 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedCharactersRoute: typeof AuthenticatedCharactersRoute
   AuthenticatedTablesRoute: typeof AuthenticatedTablesRoute
   AuthenticatedCampaignCampaignIdRoute: typeof AuthenticatedCampaignCampaignIdRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedCharactersRoute: AuthenticatedCharactersRoute,
   AuthenticatedTablesRoute: AuthenticatedTablesRoute,
   AuthenticatedCampaignCampaignIdRoute: AuthenticatedCampaignCampaignIdRoute,
 }

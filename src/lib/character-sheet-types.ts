@@ -80,6 +80,33 @@ export type SheetField =
   | ImageField
   | SectionField;
 
+// ---- Tabs (categories) ----
+// A character's `sheet` column is an array of tabs, each holding its own
+// fields — e.g. "Atributos", "Inventário", "Magias". Sheets created before
+// tabs existed stored a flat SheetField[] instead; normalizeSheet() below
+// upgrades that shape on read so old characters keep working untouched.
+
+export interface SheetTab {
+  id: string;
+  name: string;
+  fields: SheetField[];
+}
+
+export function makeTab(name: string, id: string): SheetTab {
+  return { id, name, fields: [] };
+}
+
+/** Accepts either the current `SheetTab[]` shape or a legacy flat
+ * `SheetField[]`, and always returns at least one tab. */
+export function normalizeSheet(raw: unknown): SheetTab[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  if (arr.length === 0) return [makeTab("Geral", "geral")];
+  const looksLikeTabs = "fields" in (arr[0] as object) && "name" in (arr[0] as object);
+  if (looksLikeTabs) return arr as SheetTab[];
+  // legacy: arr is actually SheetField[]
+  return [{ id: "geral", name: "Geral", fields: arr as SheetField[] }];
+}
+
 export const FIELD_PALETTE: { type: FieldType; label: string; icon: string }[] = [
   { type: "text", label: "Texto curto", icon: "❦" },
   { type: "textarea", label: "Texto longo", icon: "❧" },

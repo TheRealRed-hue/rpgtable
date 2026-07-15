@@ -152,17 +152,28 @@ function CampaignPage() {
     },
   });
 
+  // Characters are a per-user library now (not campaign-bound), so "this
+  // table's characters" means: owned by anyone participating in this
+  // campaign — the table owner plus every campaign_members row. RLS still
+  // has final say over which of those we're actually allowed to see.
+  const participantIds = useMemo(() => {
+    const ids = new Set(members.map((m) => m.user_id));
+    if (campaign?.owner_id) ids.add(campaign.owner_id);
+    return Array.from(ids);
+  }, [members, campaign]);
+
   const { data: characters = [] } = useQuery({
-    queryKey: ["characters", campaignId],
+    queryKey: ["characters", campaignId, participantIds],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("characters")
         .select("*")
-        .eq("campaign_id", campaignId)
+        .in("owner_id", participantIds)
         .order("name");
       if (error) throw error;
       return data as Character[];
     },
+    enabled: participantIds.length > 0,
   });
 
   const openCharacter = useMemo(

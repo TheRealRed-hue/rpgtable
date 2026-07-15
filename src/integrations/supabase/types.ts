@@ -98,7 +98,7 @@ export type Database = {
       };
       characters: {
         Row: {
-          campaign_id: string;
+          campaign_id: string | null;
           created_at: string;
           id: string;
           name: string;
@@ -109,7 +109,7 @@ export type Database = {
           visible_to_players: boolean;
         };
         Insert: {
-          campaign_id: string;
+          campaign_id?: string | null;
           created_at?: string;
           id?: string;
           name?: string;
@@ -120,7 +120,7 @@ export type Database = {
           visible_to_players?: boolean;
         };
         Update: {
-          campaign_id?: string;
+          campaign_id?: string | null;
           created_at?: string;
           id?: string;
           name?: string;
@@ -143,7 +143,7 @@ export type Database = {
       dice_rolls: {
         Row: {
           breakdown: Json;
-          campaign_id: string;
+          campaign_id: string | null;
           character_id: string | null;
           created_at: string;
           formula: string;
@@ -154,7 +154,7 @@ export type Database = {
         };
         Insert: {
           breakdown?: Json;
-          campaign_id: string;
+          campaign_id?: string | null;
           character_id?: string | null;
           created_at?: string;
           formula: string;
@@ -165,7 +165,7 @@ export type Database = {
         };
         Update: {
           breakdown?: Json;
-          campaign_id?: string;
+          campaign_id?: string | null;
           character_id?: string | null;
           created_at?: string;
           formula?: string;

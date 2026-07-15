@@ -5,9 +5,12 @@ import type { Character, DiceRoll } from "@/lib/board-types";
 import {
   FIELD_PALETTE,
   makeField,
+  makeTab,
+  normalizeSheet,
   rollFormula,
   type FieldType,
   type SheetField,
+  type SheetTab,
 } from "@/lib/character-sheet-types";
 import {
   Sheet,
@@ -26,11 +29,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Trash2, Dices, Eye, EyeOff, Loader2 } from "lucide-react";
+import { Plus, Trash2, Dices, Eye, EyeOff, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface Props {
-  campaignId: string;
+  /** null when opened from the personal library, outside any campaign. */
+  campaignId: string | null;
   character: Character | null;
   onOpenChange: (open: boolean) => void;
   /** Owner of the character, or the campaign master, may edit layout + values. */
@@ -39,7 +43,8 @@ interface Props {
 
 export function CharacterSheetEditor({ campaignId, character, onOpenChange, canEdit }: Props) {
   const qc = useQueryClient();
-  const [fields, setFields] = useState<SheetField[]>([]);
+  const [tabs, setTabs] = useState<SheetTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string>("");
   const [name, setName] = useState("");
 
   // The drawer is driven by `character` from the parent's cached list, so we
@@ -48,10 +53,21 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
   // of truth and only patches on explicit save.
   useEffect(() => {
     if (character) {
-      setFields((character.sheet as unknown as SheetField[]) ?? []);
+      const normalized = normalizeSheet(character.sheet);
+      setTabs(normalized);
+      setActiveTabId((prev) =>
+        normalized.some((t) => t.id === prev) ? prev : normalized[0].id,
+      );
       setName(character.name);
     }
   }, [character]);
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+  const fields = activeTab?.fields ?? [];
+  // Dice formulas can reference fields from any tab (e.g. an attack in
+  // "Combate" using a modifier from "Atributos"), so rolling resolves
+  // against every field on the sheet, not just the active tab's.
+  const allFields = tabs.flatMap((t) => t.fields);
 
   const { data: rolls = [] } = useQuery({
     queryKey: ["dice_rolls", character?.id],
@@ -84,7 +100,7 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
   }, [character, qc]);
 
   const persist = useMutation({
-    mutationFn: async (patch: { name?: string; sheet?: SheetField[] }) => {
+    mutationFn: async (patch: { name?: string; sheet?: SheetTab[] }) => {
       if (!character) return;
       const { error } = await supabase
         .from("characters")
@@ -95,7 +111,7 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
         .eq("id", character.id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["characters", campaignId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["characters"] }),
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -106,7 +122,7 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
       .update({ visible_to_players: !character.visible_to_players })
       .eq("id", character.id);
     if (error) toast.error(error.message);
-    else qc.invalidateQueries({ queryKey: ["characters", campaignId] });
+    else qc.invalidateQueries({ queryKey: ["characters"] });
   };
 
   const deleteCharacter = async () => {
@@ -114,31 +130,63 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
     if (!confirm(`Apagar "${character.name}"? Isso remove a ficha e o token da mesa.`)) return;
     const { error } = await supabase.from("characters").delete().eq("id", character.id);
     if (error) return toast.error(error.message);
-    qc.invalidateQueries({ queryKey: ["characters", campaignId] });
-    qc.invalidateQueries({ queryKey: ["board_objects", campaignId] });
+    qc.invalidateQueries({ queryKey: ["characters"] });
+    if (campaignId) qc.invalidateQueries({ queryKey: ["board_objects", campaignId] });
     onOpenChange(false);
   };
 
   const addField = (type: FieldType) => {
-    const next = [...fields, makeField(type, crypto.randomUUID().slice(0, 8))];
-    setFields(next);
+    const field = makeField(type, crypto.randomUUID().slice(0, 8));
+    const next = tabs.map((t) => (t.id === activeTabId ? { ...t, fields: [...t.fields, field] } : t));
+    setTabs(next);
     persist.mutate({ sheet: next });
   };
 
   const updateField = (id: string, patch: Partial<SheetField>) => {
-    const next = fields.map((f) => (f.id === id ? ({ ...f, ...patch } as SheetField) : f));
-    setFields(next);
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === activeTabId
+          ? { ...t, fields: t.fields.map((f) => (f.id === id ? ({ ...f, ...patch } as SheetField) : f)) }
+          : t,
+      ),
+    );
   };
 
   const removeField = (id: string) => {
-    const next = fields.filter((f) => f.id !== id);
-    setFields(next);
+    const next = tabs.map((t) =>
+      t.id === activeTabId ? { ...t, fields: t.fields.filter((f) => f.id !== id) } : t,
+    );
+    setTabs(next);
+    persist.mutate({ sheet: next });
+  };
+
+  const addTab = () => {
+    const tab = makeTab("Nova aba", crypto.randomUUID().slice(0, 8));
+    const next = [...tabs, tab];
+    setTabs(next);
+    setActiveTabId(tab.id);
+    persist.mutate({ sheet: next });
+  };
+
+  const renameTab = (id: string, name: string) => {
+    setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, name } : t)));
+  };
+
+  const removeTab = (id: string) => {
+    if (tabs.length <= 1) {
+      toast.error("A ficha precisa de pelo menos uma aba.");
+      return;
+    }
+    if (!confirm("Apagar esta aba e todos os campos dentro dela?")) return;
+    const next = tabs.filter((t) => t.id !== id);
+    setTabs(next);
+    if (activeTabId === id) setActiveTabId(next[0].id);
     persist.mutate({ sheet: next });
   };
 
   const roll = async (field: SheetField) => {
     if (field.type !== "dice" || !character) return;
-    const result = rollFormula(field.formula, fields);
+    const result = rollFormula(field.formula, allFields);
     const { data: userRes } = await supabase.auth.getUser();
     if (!userRes.user) return;
     const { error } = await supabase.from("dice_rolls").insert({
@@ -213,13 +261,55 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
               </div>
             )}
 
+            <div className="mt-6 flex flex-wrap items-center gap-1.5 border-b border-primary/10 pb-2">
+              {tabs.map((tab) => (
+                <div
+                  key={tab.id}
+                  className={`group flex items-center gap-1 rounded-t px-3 py-1.5 text-xs font-medium transition-colors ${
+                    tab.id === activeTabId
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground hover:bg-primary/5 hover:text-primary"
+                  }`}
+                >
+                  {canEdit && tab.id === activeTabId ? (
+                    <Input
+                      value={tab.name}
+                      onChange={(e) => renameTab(tab.id, e.target.value)}
+                      onBlur={() => tab.name.trim() && persist.mutate({ sheet: tabs })}
+                      className="h-5 w-24 border-none bg-transparent px-0 text-xs font-medium shadow-none focus-visible:ring-0"
+                    />
+                  ) : (
+                    <button onClick={() => setActiveTabId(tab.id)}>{tab.name}</button>
+                  )}
+                  {canEdit && tabs.length > 1 && (
+                    <button
+                      onClick={() => removeTab(tab.id)}
+                      aria-label={`Apagar aba ${tab.name}`}
+                      className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {canEdit && (
+                <button
+                  onClick={addTab}
+                  className="flex items-center gap-1 rounded px-2 py-1.5 text-xs text-muted-foreground hover:bg-primary/5 hover:text-primary"
+                  title="Nova aba/categoria"
+                >
+                  <Plus className="size-3.5" />
+                </button>
+              )}
+            </div>
+
             <div className="mt-6 grid flex-1 grid-cols-1 gap-8 lg:grid-cols-[1fr_320px]">
               <div className="space-y-3">
                 {fields.length === 0 && (
                   <p className="py-6 text-center text-xs italic text-muted-foreground">
                     {canEdit
-                      ? "Ficha em branco. Use “Adicionar campo” para montar do seu jeito."
-                      : "Esta ficha ainda não tem campos."}
+                      ? "Aba em branco. Use “Adicionar campo” para montar do seu jeito."
+                      : "Esta aba ainda não tem campos."}
                   </p>
                 )}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -232,7 +322,7 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
                         field={field}
                         canEdit={canEdit}
                         onChange={(patch) => updateField(field.id, patch)}
-                        onBlurSave={() => persist.mutate({ sheet: fields })}
+                        onBlurSave={() => persist.mutate({ sheet: tabs })}
                         onRemove={() => removeField(field.id)}
                         onRoll={() => roll(field)}
                       />
