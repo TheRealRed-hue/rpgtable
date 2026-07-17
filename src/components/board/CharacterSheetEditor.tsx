@@ -86,18 +86,25 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
 
   useEffect(() => {
     if (!character) return;
+    const characterId = character.id;
     const channel = supabase
-      .channel(`dice_rolls:${character.id}`)
+      .channel(`dice_rolls:${characterId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "dice_rolls", filter: `character_id=eq.${character.id}` },
-        () => qc.invalidateQueries({ queryKey: ["dice_rolls", character.id] }),
+        { event: "INSERT", schema: "public", table: "dice_rolls", filter: `character_id=eq.${characterId}` },
+        () => qc.invalidateQueries({ queryKey: ["dice_rolls", characterId] }),
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [character, qc]);
+    // Deliberately keyed on the id, not the whole `character` object: that
+    // object gets a new reference on every edit to this same character
+    // (rename, toggle, add field...), and re-subscribing on every keystroke
+    // was piling up realtime connections faster than they could tear down —
+    // the app-wide slowdown that needed a page reload to clear.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [character?.id, qc]);
 
   const persist = useMutation({
     mutationFn: async (patch: { name?: string; sheet?: SheetTab[] }) => {

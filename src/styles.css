@@ -166,6 +166,36 @@
   animation: candle-flicker 4.2s ease-in-out infinite;
 }
 
+/* (hover: none) + (pointer: coarse) is the standard way to detect an actual
+ * touchscreen rather than guessing from viewport width — a touch laptop
+ * still has a mouse, a narrow desktop window doesn't get penalized.
+ *
+ * Two costly effects get swapped out here, both flagged during a mobile
+ * performance pass:
+ *   - candle-flicker animates box-shadow, which (unlike opacity/transform)
+ *     isn't compositor-only — the browser repaints it every frame, forever,
+ *     for every single pin on the board. On touch we freeze it at one fixed
+ *     glow instead of disabling it outright, so pins don't just go flat.
+ *   - backdrop-blur-md (sidebar, zoom controls, theme picker) forces the
+ *     browser to keep re-blurring whatever's moving underneath it — the
+ *     board itself, constantly, while dragging/panning. Swapped for a
+ *     plain translucent fill, which costs nothing to keep up to date.
+ */
+@media (hover: none) and (pointer: coarse) {
+  .candle-glow {
+    animation: none;
+    box-shadow:
+      0 0 14px oklch(0.72 0.11 78 / 0.35),
+      0 0 3px oklch(0.72 0.11 78 / 0.7);
+  }
+
+  .backdrop-blur-md {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background-color: var(--ink-2);
+  }
+}
+
 @keyframes candle-flicker {
   0%, 100% { box-shadow: 0 0 10px oklch(0.72 0.11 78 / 0.25), 0 0 2px oklch(0.72 0.11 78 / 0.6); }
   40%      { box-shadow: 0 0 20px oklch(0.72 0.11 78 / 0.45), 0 0 4px oklch(0.72 0.11 78 / 0.75); }

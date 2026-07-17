@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import type { BoardObject, Character } from "@/lib/board-types";
 import { normalizeSheet, type NumberField, type ResourceField } from "@/lib/character-sheet-types";
+import { getBoardTheme, themeCssVars } from "@/lib/board-themes";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Lock,
@@ -12,8 +13,12 @@ import {
   ChevronsUp,
   ChevronsDown,
   Grid3x3,
+  Flame,
+  Ghost,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
 
 interface Props {
@@ -29,9 +34,25 @@ interface Props {
    * confirms the update.
    */
   onObjectMove?: (id: string, x: number, y: number) => void;
+  /** Same idea as onObjectMove, but for width/height after a corner-handle resize. */
+  onObjectResize?: (id: string, width: number, height: number) => void;
   characters?: Character[];
   onDropCharacterFromSidebar?: (characterId: string, worldX: number, worldY: number) => void;
   onOpenCharacter?: (character: Character) => void;
+  /** Effective preset id for this viewer — the player's personal override
+   * if they have one, otherwise the campaign's default. */
+  themeId?: string;
+  /**
+   * Reorder/lock/visibility/delete used to be done as raw Supabase calls
+   * right here with no cache patch, so the change only showed up once
+   * Realtime looped back — these callbacks let the campaign page do the
+   * write AND patch the cache immediately, the same pattern as
+   * onObjectMove/onObjectResize above.
+   */
+  onReorder?: (obj: BoardObject, dir: "front" | "back") => void;
+  onToggleLock?: (obj: BoardObject) => void;
+  onToggleVisibility?: (obj: BoardObject) => void;
+  onRemoveObject?: (obj: BoardObject) => void;
 }
 
 interface Viewport {
@@ -50,15 +71,30 @@ const KEYBOARD_NUDGE_STEP_LARGE = 40;
 // on top of it without any extra transform math.
 const GRID_CELL_PX = 60;
 
+const MIN_OBJECT_SIZE: Partial<Record<BoardObject["kind"], { width: number; height: number }>> = {
+  pin: { width: 28, height: 28 },
+  map: { width: 120, height: 120 },
+  image: { width: 80, height: 80 },
+  sheet: { width: 180, height: 100 },
+  document: { width: 160, height: 120 },
+};
+
 export function BoardCanvas({
   objects,
   isMaster,
   onDropFromSidebar,
   onObjectMove,
+  onObjectResize,
   characters = [],
   onDropCharacterFromSidebar,
   onOpenCharacter,
+  themeId,
+  onReorder,
+  onToggleLock,
+  onToggleVisibility,
+  onRemoveObject,
 }: Props) {
+  const theme = getBoardTheme(themeId);
   const containerRef = useRef<HTMLDivElement>(null);
   const worldLayerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
@@ -90,6 +126,15 @@ export function BoardCanvas({
     startY: number;
     origX: number;
     origY: number;
+  } | null>(null);
+
+  const [resizeObj, setResizeObj] = useState<{
+    id: string;
+    kind: BoardObject["kind"];
+    startX: number;
+    startY: number;
+    origW: number;
+    origH: number;
   } | null>(null);
 
   // Pan (one finger/mouse) + pinch-zoom (two fingers) on canvas background
@@ -287,6 +332,67 @@ export function BoardCanvas({
     };
   }, [dragObj, viewport.scale, onObjectMove, showGrid]);
 
+  // Object resize (drag the corner handle)
+  const startObjResize = useCallback(
+    (obj: BoardObject, e: React.PointerEvent) => {
+      if (!isMaster || obj.locked) return;
+      e.stopPropagation();
+      e.preventDefault();
+      setResizeObj({
+        id: obj.id,
+        kind: obj.kind,
+        startX: e.clientX,
+        startY: e.clientY,
+        origW: obj.width,
+        origH: obj.kind === "pin" ? obj.width : obj.height,
+      });
+    },
+    [isMaster],
+  );
+
+  useEffect(() => {
+    if (!resizeObj) return;
+    const min = MIN_OBJECT_SIZE[resizeObj.kind] ?? { width: 80, height: 60 };
+    let latest: { width: number; height: number } | null = null;
+    const onMove = (e: PointerEvent) => {
+      const dx = (e.clientX - resizeObj.startX) / viewport.scale;
+      const dy = (e.clientY - resizeObj.startY) / viewport.scale;
+      // Pins resize as a square (one handle drags both dimensions together)
+      // since they're a circular token, not a rectangular card.
+      const width = Math.max(min.width, resizeObj.origW + dx);
+      const height =
+        resizeObj.kind === "pin" ? width : Math.max(min.height, resizeObj.origH + dy);
+      latest = { width, height };
+      const el = document.getElementById(`bo-${resizeObj.id}`);
+      if (el) {
+        el.style.width = `${width}px`;
+        if (resizeObj.kind !== "pin") el.style.height = `${height}px`;
+      }
+    };
+    const onUp = async () => {
+      if (latest) {
+        onObjectResize?.(resizeObj.id, latest.width, latest.height);
+        const { error } = await supabase
+          .from("board_objects")
+          .update({ width: latest.width, height: latest.height })
+          .eq("id", resizeObj.id);
+        if (error) {
+          toast.error("Não foi possível salvar o tamanho: " + error.message);
+          onObjectResize?.(resizeObj.id, resizeObj.origW, resizeObj.origH);
+        }
+      }
+      setResizeObj(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [resizeObj, viewport.scale, onObjectResize]);
+
   // Drop from sidebar
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -306,20 +412,65 @@ export function BoardCanvas({
 
   const resetView = () => setViewport({ x: 0, y: 0, scale: 1 });
 
-  // Bring-to-front / send-to-back for overlapping objects. Rather than
-  // renumbering everything, just push past whatever the current extreme
-  // z_index is — cheap, and the sort in the render below only cares about
-  // relative order, not the actual numbers.
-  const reorderObject = async (obj: BoardObject, dir: "front" | "back") => {
-    const zs = objects.map((o) => o.z_index);
-    const nextZ = dir === "front" ? Math.max(0, ...zs) + 1 : Math.min(0, ...zs) - 1;
-    if (nextZ === obj.z_index) return;
-    const { error } = await supabase
-      .from("board_objects")
-      .update({ z_index: nextZ })
-      .eq("id", obj.id);
-    if (error) toast.error("Não foi possível reordenar: " + error.message);
-  };
+  // Bring-to-front / send-to-back is now handled by the campaign page's
+  // onReorder (it needs to patch the query cache immediately, not just
+  // write to Supabase and wait for Realtime — see the Props comment above).
+
+  // Dynamic light/vision: recomputed from current object positions (no
+  // persisted "revealed" memory) — but only when `objects` itself changes,
+  // not on every render (panning, selecting, opening a popover...). This
+  // was rebuilding the whole light map — and, worse, the darkness overlay's
+  // gradient string below — on every single render.
+  const getObjectCenter = useCallback(
+    (o: BoardObject) => ({
+      cx: o.x + o.width / 2,
+      cy: o.y + (o.kind === "pin" ? o.width : o.height) / 2,
+    }),
+    [],
+  );
+  const lightSources = useMemo(
+    () =>
+      objects
+        .filter((o) => o.has_light)
+        .map((o) => ({ ...getObjectCenter(o), radius: o.light_radius })),
+    [objects, getObjectCenter],
+  );
+  const isLit = useCallback(
+    (o: BoardObject) => {
+      if (lightSources.length === 0) return false;
+      const { cx, cy } = getObjectCenter(o);
+      return lightSources.some((l) => (cx - l.cx) ** 2 + (cy - l.cy) ** 2 <= l.radius ** 2);
+    },
+    [lightSources, getObjectCenter],
+  );
+
+  const FOG_BOUNDS = { left: -3000, top: -3000, size: 6000 };
+
+  const fogStyle = useMemo((): React.CSSProperties => {
+    const base: React.CSSProperties = {
+      left: FOG_BOUNDS.left,
+      top: FOG_BOUNDS.top,
+      width: FOG_BOUNDS.size,
+      height: FOG_BOUNDS.size,
+      zIndex: 5000,
+      mixBlendMode: "multiply",
+      opacity: 0.9,
+    };
+    if (lightSources.length === 0) return { ...base, backgroundColor: "var(--ink)" };
+    return {
+      ...base,
+      backgroundImage: lightSources
+        .map(
+          (l) =>
+            `radial-gradient(circle at ${l.cx - FOG_BOUNDS.left}px ${
+              l.cy - FOG_BOUNDS.top
+            }px, white 0%, var(--ink) ${l.radius}px)`,
+        )
+        .join(", "),
+      backgroundBlendMode: lightSources.length > 1 ? "screen" : undefined,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lightSources]);
 
   return (
     <div
@@ -334,10 +485,10 @@ export function BoardCanvas({
       style={{
         cursor: isPanning ? "grabbing" : "default",
         touchAction: "none",
-        backgroundImage:
-          "radial-gradient(oklch(0.72 0.11 78 / 0.06) 1px, transparent 1px), radial-gradient(oklch(0.25 0.02 60) 1px, transparent 1px)",
+        backgroundImage: `radial-gradient(${theme.dot} 1px, transparent 1px), radial-gradient(oklch(0.25 0.02 60) 1px, transparent 1px)`,
         backgroundSize: `${40 * viewport.scale}px ${40 * viewport.scale}px, ${8 * viewport.scale}px ${8 * viewport.scale}px`,
         backgroundPosition: `${viewport.x}px ${viewport.y}px`,
+        ...themeCssVars(theme),
       }}
       data-canvas-bg="1"
     >
@@ -365,6 +516,10 @@ export function BoardCanvas({
           />
         )}
 
+        {/* Dynamic light/vision — darkens everything for non-master viewers,
+            with soft holes carved out around each light-emitting object. */}
+        {!isMaster && <div aria-hidden="true" className="pointer-events-none absolute" style={fogStyle} />}
+
         {objects
           .slice()
           .sort((a, b) => a.z_index - b.z_index)
@@ -375,13 +530,19 @@ export function BoardCanvas({
               isMaster={isMaster}
               onDragStart={startObjDrag}
               onObjectMove={onObjectMove}
-              onReorder={reorderObject}
+              onReorder={onReorder}
+              onToggleLock={onToggleLock}
+              onToggleVisibility={onToggleVisibility}
+              onRemoveObject={onRemoveObject}
               isDragging={dragObj?.id === o.id}
               showGrid={showGrid}
               characters={characters}
               onOpenCharacter={onOpenCharacter}
               isSelected={selectedId === o.id}
               onSelect={() => setSelectedId(o.id)}
+              onResizeStart={startObjResize}
+              isResizing={resizeObj?.id === o.id}
+              hiddenByFog={!isMaster && o.hidden_when_dark && !isLit(o)}
             />
           ))}
 
@@ -394,6 +555,13 @@ export function BoardCanvas({
           </div>
         )}
       </div>
+
+      {/* Ambient lighting overlay for the current table theme */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{ backgroundImage: theme.vignette }}
+      />
 
       {/* Zoom controls */}
       <div
@@ -450,7 +618,7 @@ export function BoardCanvas({
   );
 }
 
-function ObjectView({
+function ObjectViewImpl({
   obj,
   isMaster,
   onDragStart,
@@ -462,18 +630,32 @@ function ObjectView({
   onOpenCharacter,
   isSelected = false,
   onSelect,
+  onResizeStart,
+  isResizing = false,
+  hiddenByFog = false,
+  onToggleLock,
+  onToggleVisibility,
+  onRemoveObject,
 }: {
   obj: BoardObject;
   isMaster: boolean;
   onDragStart: (obj: BoardObject, e: React.PointerEvent) => void;
   onObjectMove?: (id: string, x: number, y: number) => void;
-  onReorder: (obj: BoardObject, dir: "front" | "back") => void;
+  onReorder?: (obj: BoardObject, dir: "front" | "back") => void;
   isDragging?: boolean;
   showGrid?: boolean;
   characters?: Character[];
   onOpenCharacter?: (character: Character) => void;
   isSelected?: boolean;
   onSelect?: () => void;
+  onResizeStart?: (obj: BoardObject, e: React.PointerEvent) => void;
+  isResizing?: boolean;
+  /** True when this object has `hidden_when_dark` set and no light reaches
+   * it right now — only ever true for non-master viewers. */
+  hiddenByFog?: boolean;
+  onToggleLock?: (obj: BoardObject) => void;
+  onToggleVisibility?: (obj: BoardObject) => void;
+  onRemoveObject?: (obj: BoardObject) => void;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
 
@@ -498,44 +680,36 @@ function ObjectView({
     };
   }, [obj.id, obj.kind, obj.data]);
 
-  const removeObject = async () => {
-    try {
-      const { error } = await supabase.from("board_objects").delete().eq("id", obj.id);
-      if (error) throw error;
-    } catch (err) {
-      toast.error(
-        "Não foi possível remover: " + (err instanceof Error ? err.message : String(err)),
-      );
-    }
+  // Must come after every hook above so the hook count stays constant
+  // across renders even as hiddenByFog flips true/false.
+  if (hiddenByFog) return null;
+
+  // Lock/visibility/remove are now owned by the campaign page (onToggleLock,
+  // onToggleVisibility, onRemoveObject) for the same reason reorder is —
+  // patch-then-write beats write-then-wait-for-Realtime.
+
+  const toggleHasLight = async () => {
+    const { error } = await supabase
+      .from("board_objects")
+      .update({ has_light: !obj.has_light })
+      .eq("id", obj.id);
+    if (error) toast.error("Não foi possível alterar a luz: " + error.message);
   };
 
-  const toggleLock = async () => {
-    try {
-      const { error } = await supabase
-        .from("board_objects")
-        .update({ locked: !obj.locked })
-        .eq("id", obj.id);
-      if (error) throw error;
-    } catch (err) {
-      toast.error(
-        "Não foi possível travar/destravar: " + (err instanceof Error ? err.message : String(err)),
-      );
-    }
+  const setLightRadius = async (radius: number) => {
+    const { error } = await supabase
+      .from("board_objects")
+      .update({ light_radius: radius })
+      .eq("id", obj.id);
+    if (error) toast.error("Não foi possível alterar o raio: " + error.message);
   };
 
-  const toggleVisibility = async () => {
-    try {
-      const { error } = await supabase
-        .from("board_objects")
-        .update({ visible_to_players: !obj.visible_to_players })
-        .eq("id", obj.id);
-      if (error) throw error;
-    } catch (err) {
-      toast.error(
-        "Não foi possível alterar visibilidade: " +
-          (err instanceof Error ? err.message : String(err)),
-      );
-    }
+  const toggleHiddenWhenDark = async () => {
+    const { error } = await supabase
+      .from("board_objects")
+      .update({ hidden_when_dark: !obj.hidden_when_dark })
+      .eq("id", obj.id);
+    if (error) toast.error("Não foi possível alterar a visibilidade: " + error.message);
   };
 
   // Keyboard alternative to mouse-drag repositioning (accessibility): arrow
@@ -584,7 +758,7 @@ function ObjectView({
       }`}
     >
       <button
-        onClick={toggleLock}
+        onClick={() => onToggleLock?.(obj)}
         aria-label={obj.locked ? "Destravar objeto" : "Travar objeto"}
         title={obj.locked ? "Destravar" : "Travar"}
         className="grid h-7 w-7 place-items-center rounded bg-ink-2/95 ring-1 ring-primary/25 text-primary hover:bg-primary/20"
@@ -596,7 +770,7 @@ function ObjectView({
         )}
       </button>
       <button
-        onClick={toggleVisibility}
+        onClick={() => onToggleVisibility?.(obj)}
         aria-label={obj.visible_to_players ? "Ocultar dos jogadores" : "Mostrar aos jogadores"}
         title={obj.visible_to_players ? "Ocultar dos jogadores" : "Mostrar aos jogadores"}
         className="grid h-7 w-7 place-items-center rounded bg-ink-2/95 ring-1 ring-primary/25 text-primary hover:bg-primary/20"
@@ -607,8 +781,66 @@ function ObjectView({
           <EyeOff className="size-3.5" aria-hidden="true" />
         )}
       </button>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            aria-label="Configurar luz e visão"
+            title="Luz e visão"
+            className={`grid h-7 w-7 place-items-center rounded ring-1 hover:bg-primary/20 ${
+              obj.has_light
+                ? "bg-primary/25 ring-primary/50 text-primary"
+                : "bg-ink-2/95 ring-primary/25 text-primary"
+            }`}
+          >
+            <Flame className="size-3.5" aria-hidden="true" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="gold-frame w-56 bg-ink-2/95 p-3">
+          <div className="mb-3 flex items-center justify-between">
+            <label htmlFor={`light-${obj.id}`} className="flex items-center gap-1.5 text-xs">
+              <Flame className="size-3.5 text-primary" aria-hidden="true" />
+              Emite luz
+            </label>
+            <input
+              id={`light-${obj.id}`}
+              type="checkbox"
+              checked={obj.has_light}
+              onChange={toggleHasLight}
+              className="size-4 accent-primary"
+            />
+          </div>
+          {obj.has_light && (
+            <div className="mb-3">
+              <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                <span>Raio da luz</span>
+                <span>{obj.light_radius}px</span>
+              </div>
+              <Slider
+                defaultValue={[obj.light_radius]}
+                min={50}
+                max={1000}
+                step={25}
+                onValueCommit={([v]) => setLightRadius(v)}
+              />
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <label htmlFor={`fog-${obj.id}`} className="flex items-center gap-1.5 text-xs">
+              <Ghost className="size-3.5 text-primary" aria-hidden="true" />
+              Só visível se iluminado
+            </label>
+            <input
+              id={`fog-${obj.id}`}
+              type="checkbox"
+              checked={obj.hidden_when_dark}
+              onChange={toggleHiddenWhenDark}
+              className="size-4 accent-primary"
+            />
+          </div>
+        </PopoverContent>
+      </Popover>
       <button
-        onClick={() => onReorder(obj, "back")}
+        onClick={() => onReorder?.(obj, "back")}
         aria-label="Mandar para trás"
         title="Mandar para trás (sobreposição)"
         className="grid h-7 w-7 place-items-center rounded bg-ink-2/95 ring-1 ring-primary/25 text-primary hover:bg-primary/20"
@@ -616,7 +848,7 @@ function ObjectView({
         <ChevronsDown className="size-3.5" aria-hidden="true" />
       </button>
       <button
-        onClick={() => onReorder(obj, "front")}
+        onClick={() => onReorder?.(obj, "front")}
         aria-label="Trazer para frente"
         title="Trazer para frente (sobreposição)"
         className="grid h-7 w-7 place-items-center rounded bg-ink-2/95 ring-1 ring-primary/25 text-primary hover:bg-primary/20"
@@ -624,7 +856,7 @@ function ObjectView({
         <ChevronsUp className="size-3.5" aria-hidden="true" />
       </button>
       <button
-        onClick={removeObject}
+        onClick={() => onRemoveObject?.(obj)}
         aria-label="Remover objeto"
         title="Remover"
         className="grid h-7 w-7 place-items-center rounded bg-ink-2/95 ring-1 ring-destructive/40 text-destructive hover:bg-destructive/20"
@@ -646,6 +878,19 @@ function ObjectView({
     </div>
   );
 
+  const resizeHandle = isMaster && !obj.locked && (
+    <div
+      onPointerDown={(e) => onResizeStart?.(obj, e)}
+      role="presentation"
+      aria-label="Redimensionar objeto"
+      title="Arraste para redimensionar"
+      className={`pointer-events-auto absolute right-1 bottom-1 z-10 size-3.5 cursor-nwse-resize rounded-full bg-primary ring-2 ring-ink-2 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
+        isSelected || isResizing ? "opacity-100" : "opacity-0"
+      }`}
+      style={{ touchAction: "none" }}
+    />
+  );
+
   const style: React.CSSProperties = {
     transform: `translate(${obj.x}px, ${obj.y}px)${isDragging ? " scale(1.03)" : ""}`,
     width: obj.width,
@@ -653,11 +898,12 @@ function ObjectView({
     zIndex: isDragging ? 9999 : obj.z_index,
     opacity: !obj.visible_to_players && isMaster ? 0.55 : 1,
     boxShadow: isDragging ? "0 12px 28px -8px oklch(0 0 0 / 0.55)" : undefined,
-    transition: isDragging ? "none" : "box-shadow 120ms ease",
+    transition: isDragging || isResizing ? "none" : "box-shadow 120ms ease",
   };
 
   // Render by kind
   if (obj.kind === "pin") {
+    const size = obj.width || 40;
     return (
       <div
         id={`bo-${obj.id}`}
@@ -667,13 +913,15 @@ function ObjectView({
         {controls}
         <div
           {...commonHandleProps}
-          className={`candle-glow relative grid size-10 cursor-grab place-items-center rounded-full bg-wax ring-2 ring-primary/40 ${
+          className={`candle-glow relative grid cursor-grab place-items-center rounded-full bg-wax ring-2 ring-primary/40 ${
             obj.locked ? "cursor-not-allowed" : ""
           }`}
+          style={{ ...commonHandleProps.style, width: size, height: size }}
         >
           <span className="grimoire-title text-sm text-primary">
             {(obj.label ?? "•").slice(0, 1).toUpperCase()}
           </span>
+          {resizeHandle}
         </div>
         {obj.label && (
           <div className="mt-2 max-w-[10rem] text-center text-[11px] font-medium tracking-wide text-primary/80">
@@ -684,7 +932,7 @@ function ObjectView({
     );
   }
 
-  if (obj.kind === "map" || obj.kind === "image") {
+  if (obj.kind === "map") {
     return (
       <div
         id={`bo-${obj.id}`}
@@ -706,6 +954,37 @@ function ObjectView({
             </div>
           )}
         </div>
+        {resizeHandle}
+      </div>
+    );
+  }
+
+  // image — standalone art (tokens, transparent-background PNGs, etc).
+  // Unlike "map", this has no parchment card, no multiply blend, and no
+  // cropping: a token's transparent background needs to stay transparent
+  // (multiply against the dark table crushed light/transparent areas to
+  // near-black) and its silhouette needs to stay uncropped (object-contain,
+  // not object-cover) so the whole piece of art is visible as placed.
+  if (obj.kind === "image") {
+    return (
+      <div id={`bo-${obj.id}`} className="board-object-in group absolute top-0 left-0" style={style}>
+        {controls}
+        <div {...commonHandleProps} className="absolute inset-0 cursor-grab">
+          {imgUrl ? (
+            <img
+              src={imgUrl}
+              alt={obj.label ?? ""}
+              className="h-full w-full object-contain"
+              style={{ filter: "drop-shadow(0 4px 10px rgba(0,0,0,0.5))" }}
+              draggable={false}
+            />
+          ) : (
+            <div className="grid h-full w-full place-items-center rounded bg-ink-2/60 text-xs uppercase tracking-widest text-ink/40 ring-1 ring-primary/15">
+              {obj.label ?? "Imagem"}
+            </div>
+          )}
+        </div>
+        {resizeHandle}
       </div>
     );
   }
@@ -769,6 +1048,7 @@ function ObjectView({
             </span>
           )}
         </div>
+        {resizeHandle}
       </div>
     );
   }
@@ -794,6 +1074,33 @@ function ObjectView({
       <div className="scrollbar-arcane grimoire-title flex-1 overflow-auto whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed text-ink/90">
         {content || <span className="italic text-ink/40">Este pergaminho está em branco.</span>}
       </div>
+      {resizeHandle}
     </div>
   );
 }
+
+// Every board-level state change (panning, selecting a different object,
+// a realtime update to some *other* object) used to re-render every single
+// card, because none of them were memoized — on a board with a dozen+
+// tokens this adds up fast, especially on weaker mobile CPUs. Callback
+// props (onSelect, onReorder, etc.) are deliberately left out of the
+// comparison: they get a new function identity most renders but always
+// close over the same `obj`/id and call through to the same underlying
+// handler, so comparing them would defeat the memoization for no benefit.
+function objectViewPropsEqual(
+  prev: Parameters<typeof ObjectViewImpl>[0],
+  next: Parameters<typeof ObjectViewImpl>[0],
+) {
+  return (
+    prev.obj === next.obj &&
+    prev.isMaster === next.isMaster &&
+    prev.isDragging === next.isDragging &&
+    prev.isResizing === next.isResizing &&
+    prev.isSelected === next.isSelected &&
+    prev.showGrid === next.showGrid &&
+    prev.hiddenByFog === next.hiddenByFog &&
+    prev.characters === next.characters
+  );
+}
+
+const ObjectView = memo(ObjectViewImpl, objectViewPropsEqual);

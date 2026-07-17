@@ -61,6 +61,11 @@ interface Props {
   currentUserId?: string | null;
   onOpenCharacter?: (character: Character) => void;
   onAddCharacterToBoard?: (characterId: string) => void;
+  /** Owned by the campaign page — see the matching comment on BoardCanvas's
+   * Props for why these replaced this panel's own direct Supabase calls. */
+  onReorder?: (obj: BoardObject, dir: "front" | "back") => void;
+  onToggleVisibility?: (obj: BoardObject) => void;
+  onRemoveObject?: (obj: BoardObject) => void;
 }
 
 const KIND_GLYPH: Record<string, string> = {
@@ -119,6 +124,9 @@ export function ArchiveSidebar({
   currentUserId = null,
   onOpenCharacter,
   onAddCharacterToBoard,
+  onReorder,
+  onToggleVisibility,
+  onRemoveObject,
 }: Props) {
   const qc = useQueryClient();
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
@@ -128,32 +136,10 @@ export function ArchiveSidebar({
   const [activeTab, setActiveTab] = useState<"archive" | "layers" | "characters">("archive");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Bring-to-front / send-to-back — same logic as BoardCanvas's reorderObject,
-  // duplicated here rather than lifted up so this panel stays a self-contained
-  // read of `objects` + direct writes, same pattern as deleteItem below.
-  const reorderObject = async (obj: BoardObject, dir: "front" | "back") => {
-    const zs = objects.map((o) => o.z_index);
-    const nextZ = dir === "front" ? Math.max(0, ...zs) + 1 : Math.min(0, ...zs) - 1;
-    if (nextZ === obj.z_index) return;
-    const { error } = await supabase
-      .from("board_objects")
-      .update({ z_index: nextZ })
-      .eq("id", obj.id);
-    if (error) toast.error("Não foi possível reordenar: " + error.message);
-  };
-
-  const toggleObjectVisibility = async (obj: BoardObject) => {
-    const { error } = await supabase
-      .from("board_objects")
-      .update({ visible_to_players: !obj.visible_to_players })
-      .eq("id", obj.id);
-    if (error) toast.error("Não foi possível alterar visibilidade: " + error.message);
-  };
-
-  const removeBoardObject = async (obj: BoardObject) => {
-    const { error } = await supabase.from("board_objects").delete().eq("id", obj.id);
-    if (error) toast.error("Não foi possível remover: " + error.message);
-  };
+  // Reorder/visibility/remove are owned by the campaign page now (onReorder,
+  // onToggleVisibility, onRemoveObject) — they patch the query cache
+  // immediately instead of writing here and waiting for Realtime to loop
+  // back, which is what made this panel feel laggy before.
 
   const [folderName, setFolderName] = useState("");
   const [folderIcon, setFolderIcon] = useState("moon");
@@ -402,7 +388,7 @@ export function ArchiveSidebar({
                   </div>
                   <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                     <button
-                      onClick={() => toggleObjectVisibility(obj)}
+                      onClick={() => onToggleVisibility?.(obj)}
                       aria-label={
                         obj.visible_to_players ? "Ocultar dos jogadores" : "Mostrar aos jogadores"
                       }
@@ -418,7 +404,7 @@ export function ArchiveSidebar({
                       )}
                     </button>
                     <button
-                      onClick={() => reorderObject(obj, "back")}
+                      onClick={() => onReorder?.(obj, "back")}
                       aria-label="Mandar para trás"
                       title="Mandar para trás"
                       className="grid size-6 place-items-center rounded hover:bg-primary/10 hover:text-primary"
@@ -426,7 +412,7 @@ export function ArchiveSidebar({
                       <ChevronsDown className="size-3.5" aria-hidden="true" />
                     </button>
                     <button
-                      onClick={() => reorderObject(obj, "front")}
+                      onClick={() => onReorder?.(obj, "front")}
                       aria-label="Trazer para frente"
                       title="Trazer para frente"
                       className="grid size-6 place-items-center rounded hover:bg-primary/10 hover:text-primary"
@@ -434,7 +420,7 @@ export function ArchiveSidebar({
                       <ChevronsUp className="size-3.5" aria-hidden="true" />
                     </button>
                     <button
-                      onClick={() => removeBoardObject(obj)}
+                      onClick={() => onRemoveObject?.(obj)}
                       aria-label={`Remover ${obj.label || "objeto"} da mesa`}
                       title="Remover da mesa"
                       className="grid size-6 place-items-center rounded hover:bg-destructive/20 hover:text-destructive"

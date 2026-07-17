@@ -16,11 +16,14 @@ export type Database = {
           created_by: string;
           data: Json;
           file_id: string | null;
+          has_light: boolean;
           height: number;
+          hidden_when_dark: boolean;
           icon: string | null;
           id: string;
           kind: Database["public"]["Enums"]["board_object_kind"];
           label: string | null;
+          light_radius: number;
           locked: boolean;
           rotation: number;
           updated_at: string;
@@ -37,11 +40,14 @@ export type Database = {
           created_by: string;
           data?: Json;
           file_id?: string | null;
+          has_light?: boolean;
           height?: number;
+          hidden_when_dark?: boolean;
           icon?: string | null;
           id?: string;
           kind: Database["public"]["Enums"]["board_object_kind"];
           label?: string | null;
+          light_radius?: number;
           locked?: boolean;
           rotation?: number;
           updated_at?: string;
@@ -58,11 +64,14 @@ export type Database = {
           created_by?: string;
           data?: Json;
           file_id?: string | null;
+          has_light?: boolean;
           height?: number;
+          hidden_when_dark?: boolean;
           icon?: string | null;
           id?: string;
           kind?: Database["public"]["Enums"]["board_object_kind"];
           label?: string | null;
+          light_radius?: number;
           locked?: boolean;
           rotation?: number;
           updated_at?: string;
@@ -233,6 +242,7 @@ export type Database = {
           id: string;
           name: string;
           owner_id: string;
+          theme: string;
           updated_at: string;
         };
         Insert: {
@@ -241,6 +251,7 @@ export type Database = {
           id?: string;
           name: string;
           owner_id: string;
+          theme?: string;
           updated_at?: string;
         };
         Update: {
@@ -249,9 +260,39 @@ export type Database = {
           id?: string;
           name?: string;
           owner_id?: string;
+          theme?: string;
           updated_at?: string;
         };
         Relationships: [];
+      };
+      campaign_theme_overrides: {
+        Row: {
+          campaign_id: string;
+          theme: string;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          campaign_id: string;
+          theme: string;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          campaign_id?: string;
+          theme?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "campaign_theme_overrides_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       files: {
         Row: {

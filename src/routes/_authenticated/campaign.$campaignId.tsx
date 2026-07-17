@@ -7,8 +7,10 @@ import { isMembershipConfirmed, markMembershipConfirmed } from "@/lib/membership
 import { useIsMobile } from "@/hooks/use-mobile";
 import { BoardCanvas } from "@/components/board/BoardCanvas";
 import { ArchiveSidebar } from "@/components/board/ArchiveSidebar";
+import type { Database } from "@/integrations/supabase/types";
 import type { BoardObject, Campaign, Character, FileRow, Folder } from "@/lib/board-types";
 import { CharacterSheetEditor } from "@/components/board/CharacterSheetEditor";
+import { ThemePicker } from "@/components/board/ThemePicker";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
@@ -44,13 +46,23 @@ async function ensureCampaignMembership(campaignId: string) {
     return { error: new Error("Not authenticated") };
   }
 
-  const { error } = await supabase.from("campaign_members").insert({
-    campaign_id: campaignId,
-    user_id: user.id,
-    role: "player",
-  });
+  const { error } = await supabase.from("campaign_members").upsert(
+    {
+      campaign_id: campaignId,
+      user_id: user.id,
+      role: "player",
+    },
+    // "campaign_members" has a UNIQUE (campaign_id, user_id) constraint.
+    // ignoreDuplicates turns this into an INSERT ... ON CONFLICT DO NOTHING
+    // at the database level, so an existing member's browser never gets a
+    // 409 back in the first place — previously we let the insert fail and
+    // swallowed the resulting error code (23505) after the fact, which
+    // worked but left a scary-looking failed request in the console on
+    // every single page load.
+    { onConflict: "campaign_id,user_id", ignoreDuplicates: true },
+  );
 
-  if (error && error.code !== "23505") {
+  if (error) {
     return { error };
   }
 
@@ -106,6 +118,26 @@ function CampaignPage() {
       return data as Campaign;
     },
   });
+
+  // Personal preset, if this viewer has set one — null just means "use the
+  // campaign's default theme instead", so a missing row is a normal state,
+  // not an error, and is queried with maybeSingle().
+  const { data: myThemeOverride } = useQuery({
+    queryKey: ["theme_override", campaignId, userId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("campaign_theme_overrides")
+        .select("theme")
+        .eq("campaign_id", campaignId)
+        .eq("user_id", userId!)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.theme ?? null;
+    },
+    enabled: !!userId,
+  });
+
+  const effectiveThemeId = myThemeOverride ?? campaign?.theme ?? "padrao";
 
   const { data: members = [] } = useQuery({
     queryKey: ["members", campaignId],
@@ -218,13 +250,26 @@ function CampaignPage() {
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "characters" },
+        // Characters are a per-user library now, not campaign-scoped, so we
+        // can't filter this subscription by campaign_id server-side — just
+        // invalidate every "characters"-prefixed query on any change.
+        () => qc.invalidateQueries({ queryKey: ["characters"] }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "campaigns", filter: `id=eq.${campaignId}` },
+        () => qc.invalidateQueries({ queryKey: ["campaign", campaignId] }),
+      )
+      .on(
+        "postgres_changes",
         {
           event: "*",
           schema: "public",
-          table: "characters",
+          table: "campaign_theme_overrides",
           filter: `campaign_id=eq.${campaignId}`,
         },
-        () => qc.invalidateQueries({ queryKey: ["characters", campaignId] }),
+        () => qc.invalidateQueries({ queryKey: ["theme_override", campaignId] }),
       )
       .subscribe();
     return () => {
@@ -236,11 +281,121 @@ function CampaignPage() {
   // so the object doesn't visibly snap back before Realtime confirms the
   // write (see BoardCanvas.tsx). Both possible cache entries (master view and
   // player view) are patched since either may be mounted/cached.
+  // Every mutation below follows the same shape: patch the cache first so
+  // the UI responds immediately, then write to Supabase, and only fall back
+  // to a full refetch if the write actually failed. These used to be
+  // duplicated (with no optimistic patch at all) in both BoardCanvas.tsx
+  // and ArchiveSidebar.tsx's "Camadas" panel — which is exactly why
+  // reordering/deleting from the layers panel felt like it lagged and only
+  // "caught up" once realtime came back around.
+  const patchBoardObject = (id: string, patch: Partial<BoardObject>) => {
+    const updater = (old: BoardObject[] | undefined) =>
+      old?.map((o) => (o.id === id ? { ...o, ...patch } : o));
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, true], updater);
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, false], updater);
+  };
+
+  const handleReorderObject = async (obj: BoardObject, dir: "front" | "back") => {
+    const zs = objects.map((o) => o.z_index);
+    const nextZ = dir === "front" ? Math.max(0, ...zs) + 1 : Math.min(0, ...zs) - 1;
+    if (nextZ === obj.z_index) return;
+    patchBoardObject(obj.id, { z_index: nextZ });
+    const { error } = await supabase
+      .from("board_objects")
+      .update({ z_index: nextZ })
+      .eq("id", obj.id);
+    if (error) {
+      toast.error("Não foi possível reordenar: " + error.message);
+      patchBoardObject(obj.id, { z_index: obj.z_index });
+    }
+  };
+
+  const handleToggleLock = async (obj: BoardObject) => {
+    const next = !obj.locked;
+    patchBoardObject(obj.id, { locked: next });
+    const { error } = await supabase.from("board_objects").update({ locked: next }).eq("id", obj.id);
+    if (error) {
+      toast.error("Não foi possível travar/destravar: " + error.message);
+      patchBoardObject(obj.id, { locked: obj.locked });
+    }
+  };
+
+  const handleToggleObjectVisibility = async (obj: BoardObject) => {
+    const next = !obj.visible_to_players;
+    const updated = { ...obj, visible_to_players: next };
+    // The unfiltered (master) cache just gets patched in place, but the
+    // player-filtered cache is only ever the subset with
+    // visible_to_players=true — so flipping the flag has to add/remove the
+    // row from that array, not just update a field on it.
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, false], (old) =>
+      old?.map((o) => (o.id === obj.id ? updated : o)),
+    );
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, true], (old) => {
+      if (!old) return old;
+      if (next) {
+        return old.some((o) => o.id === obj.id)
+          ? old.map((o) => (o.id === obj.id ? updated : o))
+          : [...old, updated];
+      }
+      return old.filter((o) => o.id !== obj.id);
+    });
+    const { error } = await supabase
+      .from("board_objects")
+      .update({ visible_to_players: next })
+      .eq("id", obj.id);
+    if (error) {
+      toast.error("Não foi possível alterar visibilidade: " + error.message);
+      qc.invalidateQueries({ queryKey: ["board_objects", campaignId] });
+    }
+  };
+
+  const handleRemoveObject = async (obj: BoardObject) => {
+    const removeFrom = (old: BoardObject[] | undefined) => old?.filter((o) => o.id !== obj.id);
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, true], removeFrom);
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, false], removeFrom);
+    const { error } = await supabase.from("board_objects").delete().eq("id", obj.id);
+    if (error) {
+      toast.error("Não foi possível remover: " + error.message);
+      qc.invalidateQueries({ queryKey: ["board_objects", campaignId] });
+    }
+  };
+
   const handleObjectMove = (id: string, x: number, y: number) => {
     const patch = (old: BoardObject[] | undefined) =>
       old?.map((o) => (o.id === id ? { ...o, x, y } : o));
     qc.setQueryData<BoardObject[]>(["board_objects", campaignId, true], patch);
     qc.setQueryData<BoardObject[]>(["board_objects", campaignId, false], patch);
+  };
+
+  const handleObjectResize = (id: string, width: number, height: number) => {
+    const patch = (old: BoardObject[] | undefined) =>
+      old?.map((o) => (o.id === id ? { ...o, width, height } : o));
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, true], patch);
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, false], patch);
+  };
+
+  // Every "place something on the board" action used to just fire the
+  // INSERT and wait for the realtime event to bring it back — which meant
+  // a dropped/delayed realtime message (flaky connection, backgrounded tab)
+  // left the new object invisible until a manual reload. This inserts,
+  // reads the created row straight back, and writes it into the cache
+  // ourselves; realtime remains how *other* people's browsers find out,
+  // but our own view no longer depends on it.
+  const insertBoardObject = async (
+    payload: Database["public"]["Tables"]["board_objects"]["Insert"],
+  ) => {
+    const { data, error } = await supabase.from("board_objects").insert(payload).select().single();
+    if (error || !data) return { error };
+    const newObj = data as BoardObject;
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, false], (old) =>
+      old ? [...old, newObj] : [newObj],
+    );
+    if (newObj.visible_to_players) {
+      qc.setQueryData<BoardObject[]>(["board_objects", campaignId, true], (old) =>
+        old ? [...old, newObj] : [newObj],
+      );
+    }
+    return { data: newObj, error: null };
   };
 
   const handleDropFromSidebar = async (fileId: string, worldX: number, worldY: number) => {
@@ -255,7 +410,7 @@ function CampaignPage() {
       const kind = isImage ? (file.kind === "map" ? "map" : "image") : "document";
       const width = isImage ? 640 : 320;
       const height = isImage ? 420 : 260;
-      const { error } = await supabase.from("board_objects").insert({
+      const { error } = await insertBoardObject({
         campaign_id: campaignId,
         kind,
         file_id: file.id,
@@ -298,7 +453,7 @@ function CampaignPage() {
       toast.error("Você só pode colocar seus próprios personagens na mesa.");
       return;
     }
-    const { error } = await supabase.from("board_objects").insert({
+    const { error } = await insertBoardObject({
       campaign_id: campaignId,
       kind: "sheet",
       character_id: character.id,
@@ -329,7 +484,7 @@ function CampaignPage() {
     const label = pinLabel.trim();
     if (!label) return;
     try {
-      const { error } = await supabase.from("board_objects").insert({
+      const { error } = await insertBoardObject({
         campaign_id: campaignId,
         kind: "pin",
         label,
@@ -536,7 +691,20 @@ function CampaignPage() {
             onDropFromSidebar={handleDropFromSidebar}
             onDropCharacterFromSidebar={handleDropCharacterFromSidebar}
             onObjectMove={handleObjectMove}
+            onObjectResize={handleObjectResize}
             onOpenCharacter={(c) => setOpenCharacterId(c.id)}
+            themeId={effectiveThemeId}
+            onReorder={handleReorderObject}
+            onToggleLock={handleToggleLock}
+            onToggleVisibility={handleToggleObjectVisibility}
+            onRemoveObject={handleRemoveObject}
+          />
+          <ThemePicker
+            campaignId={campaignId}
+            userId={userId}
+            isMaster={isMaster}
+            campaignTheme={campaign?.theme ?? "padrao"}
+            myOverride={myThemeOverride ?? null}
           />
         </div>
 
@@ -568,6 +736,9 @@ function CampaignPage() {
             onAddFile={handleAddFileFromSidebarTap}
             onOpenCharacter={(c) => setOpenCharacterId(c.id)}
             onAddCharacterToBoard={handleAddCharacterFromSidebarTap}
+            onReorder={handleReorderObject}
+            onToggleVisibility={handleToggleObjectVisibility}
+            onRemoveObject={handleRemoveObject}
           />
         </div>
       </div>
