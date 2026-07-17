@@ -360,6 +360,27 @@ function CampaignPage() {
     }
   };
 
+  // Same story as reorder/lock/visibility above — has_light/light_radius/
+  // hidden_when_dark were still doing a raw write straight from
+  // BoardCanvas.tsx with no cache patch, missed when the others were
+  // centralized, which is why the light controls specifically felt stuck
+  // until Realtime looped back.
+  const handleSetLight = async (
+    obj: BoardObject,
+    patch: Partial<Pick<BoardObject, "has_light" | "light_radius" | "hidden_when_dark">>,
+  ) => {
+    patchBoardObject(obj.id, patch);
+    const { error } = await supabase.from("board_objects").update(patch).eq("id", obj.id);
+    if (error) {
+      toast.error("Não foi possível alterar a luz: " + error.message);
+      patchBoardObject(obj.id, {
+        has_light: obj.has_light,
+        light_radius: obj.light_radius,
+        hidden_when_dark: obj.hidden_when_dark,
+      });
+    }
+  };
+
   // A "pergaminho" placed on the board used to be a one-time snapshot of the
   // source file's text with no way to change it afterward — editing meant
   // deleting the card and dropping the file again. This lets it be edited
@@ -716,6 +737,7 @@ function CampaignPage() {
             onToggleVisibility={handleToggleObjectVisibility}
             onRemoveObject={handleRemoveObject}
             onEditDocument={handleEditDocument}
+            onSetLight={handleSetLight}
           />
           <ThemePicker
             campaignId={campaignId}

@@ -56,6 +56,10 @@ interface Props {
   onToggleVisibility?: (obj: BoardObject) => void;
   onRemoveObject?: (obj: BoardObject) => void;
   onEditDocument?: (obj: BoardObject, content: string) => void;
+  onSetLight?: (
+    obj: BoardObject,
+    patch: Partial<Pick<BoardObject, "has_light" | "light_radius" | "hidden_when_dark">>,
+  ) => void;
 }
 
 interface Viewport {
@@ -97,6 +101,7 @@ export function BoardCanvas({
   onToggleVisibility,
   onRemoveObject,
   onEditDocument,
+  onSetLight,
 }: Props) {
   const theme = getBoardTheme(themeId);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -539,6 +544,7 @@ export function BoardCanvas({
               onToggleVisibility={onToggleVisibility}
               onRemoveObject={onRemoveObject}
               onEditDocument={onEditDocument}
+              onSetLight={onSetLight}
               isDragging={dragObj?.id === o.id}
               showGrid={showGrid}
               characters={characters}
@@ -642,6 +648,7 @@ function ObjectViewImpl({
   onToggleVisibility,
   onRemoveObject,
   onEditDocument,
+  onSetLight,
 }: {
   obj: BoardObject;
   isMaster: boolean;
@@ -663,6 +670,10 @@ function ObjectViewImpl({
   onToggleVisibility?: (obj: BoardObject) => void;
   onRemoveObject?: (obj: BoardObject) => void;
   onEditDocument?: (obj: BoardObject, content: string) => void;
+  onSetLight?: (
+    obj: BoardObject,
+    patch: Partial<Pick<BoardObject, "has_light" | "light_radius" | "hidden_when_dark">>,
+  ) => void;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [isEditingDoc, setIsEditingDoc] = useState(false);
@@ -696,29 +707,8 @@ function ObjectViewImpl({
   // onToggleVisibility, onRemoveObject) for the same reason reorder is —
   // patch-then-write beats write-then-wait-for-Realtime.
 
-  const toggleHasLight = async () => {
-    const { error } = await supabase
-      .from("board_objects")
-      .update({ has_light: !obj.has_light })
-      .eq("id", obj.id);
-    if (error) toast.error("Não foi possível alterar a luz: " + error.message);
-  };
-
-  const setLightRadius = async (radius: number) => {
-    const { error } = await supabase
-      .from("board_objects")
-      .update({ light_radius: radius })
-      .eq("id", obj.id);
-    if (error) toast.error("Não foi possível alterar o raio: " + error.message);
-  };
-
-  const toggleHiddenWhenDark = async () => {
-    const { error } = await supabase
-      .from("board_objects")
-      .update({ hidden_when_dark: !obj.hidden_when_dark })
-      .eq("id", obj.id);
-    if (error) toast.error("Não foi possível alterar a visibilidade: " + error.message);
-  };
+  // Light settings are owned by the campaign page now too (onSetLight) —
+  // same reason as everything else above.
 
   // Keyboard alternative to mouse-drag repositioning (accessibility): arrow
   // keys nudge the object; holding Shift moves it in larger steps. When the
@@ -813,7 +803,7 @@ function ObjectViewImpl({
               id={`light-${obj.id}`}
               type="checkbox"
               checked={obj.has_light}
-              onChange={toggleHasLight}
+              onChange={() => onSetLight?.(obj, { has_light: !obj.has_light })}
               className="size-4 accent-primary"
             />
           </div>
@@ -828,7 +818,7 @@ function ObjectViewImpl({
                 min={50}
                 max={1000}
                 step={25}
-                onValueCommit={([v]) => setLightRadius(v)}
+                onValueCommit={([v]) => onSetLight?.(obj, { light_radius: v })}
               />
             </div>
           )}
@@ -841,7 +831,7 @@ function ObjectViewImpl({
               id={`fog-${obj.id}`}
               type="checkbox"
               checked={obj.hidden_when_dark}
-              onChange={toggleHiddenWhenDark}
+              onChange={() => onSetLight?.(obj, { hidden_when_dark: !obj.hidden_when_dark })}
               className="size-4 accent-primary"
             />
           </div>
