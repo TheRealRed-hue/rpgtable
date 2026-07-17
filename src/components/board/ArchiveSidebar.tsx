@@ -296,7 +296,16 @@ export function ArchiveSidebar({
 
   const onDragFile = (e: React.DragEvent, fileId: string) => {
     e.dataTransfer.setData("text/file-id", fileId);
-    e.dataTransfer.effectAllowed = "copy";
+    e.dataTransfer.effectAllowed = "copyMove";
+  };
+
+  // Drag a file card onto a folder (or onto empty space, for the root) to
+  // reorganize it — previously the only way to move a file between folders
+  // was to delete it and re-upload into the right one.
+  const moveFileToFolder = async (fileId: string, folderId: string | null) => {
+    const { error } = await supabase.from("files").update({ folder_id: folderId }).eq("id", fileId);
+    if (error) toast.error("Não foi possível mover o arquivo: " + error.message);
+    else qc.invalidateQueries({ queryKey: ["files", campaignId] });
   };
 
   return (
@@ -592,7 +601,17 @@ export function ArchiveSidebar({
             </div>
           )}
 
-          <div className="scrollbar-arcane flex-1 overflow-y-auto p-3">
+          <div
+            className="scrollbar-arcane flex-1 overflow-y-auto p-3"
+            onDragOver={(e) => {
+              if (isMaster) e.preventDefault();
+            }}
+            onDrop={(e) => {
+              if (!isMaster) return;
+              const fileId = e.dataTransfer.getData("text/file-id");
+              if (fileId) moveFileToFolder(fileId, null);
+            }}
+          >
             <div className="space-y-0.5">
               {rootFolders.map((f) => (
                 <FolderNode
@@ -606,6 +625,7 @@ export function ArchiveSidebar({
                   onDeleteFolder={(id) => deleteItem("folder", id)}
                   onDeleteFile={(id) => deleteItem("file", id)}
                   onDragFile={onDragFile}
+                  onMoveFile={moveFileToFolder}
                   isMobile={isMobile}
                   onAddFile={onAddFile}
                   depth={0}
@@ -673,6 +693,7 @@ function FolderNode({
   onDeleteFolder,
   onDeleteFile,
   onDragFile,
+  onMoveFile,
   isMobile = false,
   onAddFile,
   depth,
@@ -686,6 +707,7 @@ function FolderNode({
   onDeleteFolder: (id: string) => void;
   onDeleteFile: (id: string) => void;
   onDragFile: (e: React.DragEvent, fileId: string) => void;
+  onMoveFile: (fileId: string, folderId: string | null) => void;
   isMobile?: boolean;
   onAddFile?: (fileId: string) => void;
   depth: number;
@@ -693,12 +715,31 @@ function FolderNode({
   const isOpen = open[folder.id] ?? true;
   const children = folders.filter((f) => f.parent_id === folder.id);
   const childFiles = files.filter((f) => f.folder_id === folder.id);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   return (
     <div>
       <div
-        className="group flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground hover:bg-primary/5 hover:text-primary"
+        className={`group flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground hover:bg-primary/5 hover:text-primary ${
+          isDragOver ? "bg-primary/15 text-primary ring-1 ring-primary/40" : ""
+        }`}
         style={{ paddingLeft: 8 + depth * 12 }}
+        onDragOver={(e) => {
+          if (!isMaster) return;
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "move";
+          setIsDragOver(true);
+        }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={(e) => {
+          if (!isMaster) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragOver(false);
+          const fileId = e.dataTransfer.getData("text/file-id");
+          if (fileId) onMoveFile(fileId, folder.id);
+        }}
       >
         <button
           onClick={() => setOpen((s) => ({ ...s, [folder.id]: !isOpen }))}
@@ -743,6 +784,7 @@ function FolderNode({
               onDeleteFolder={onDeleteFolder}
               onDeleteFile={onDeleteFile}
               onDragFile={onDragFile}
+              onMoveFile={onMoveFile}
               isMobile={isMobile}
               onAddFile={onAddFile}
               depth={depth + 1}

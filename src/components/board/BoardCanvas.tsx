@@ -15,6 +15,8 @@ import {
   Grid3x3,
   Flame,
   Ghost,
+  Pencil,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -53,6 +55,7 @@ interface Props {
   onToggleLock?: (obj: BoardObject) => void;
   onToggleVisibility?: (obj: BoardObject) => void;
   onRemoveObject?: (obj: BoardObject) => void;
+  onEditDocument?: (obj: BoardObject, content: string) => void;
 }
 
 interface Viewport {
@@ -93,6 +96,7 @@ export function BoardCanvas({
   onToggleLock,
   onToggleVisibility,
   onRemoveObject,
+  onEditDocument,
 }: Props) {
   const theme = getBoardTheme(themeId);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -534,6 +538,7 @@ export function BoardCanvas({
               onToggleLock={onToggleLock}
               onToggleVisibility={onToggleVisibility}
               onRemoveObject={onRemoveObject}
+              onEditDocument={onEditDocument}
               isDragging={dragObj?.id === o.id}
               showGrid={showGrid}
               characters={characters}
@@ -636,6 +641,7 @@ function ObjectViewImpl({
   onToggleLock,
   onToggleVisibility,
   onRemoveObject,
+  onEditDocument,
 }: {
   obj: BoardObject;
   isMaster: boolean;
@@ -656,8 +662,10 @@ function ObjectViewImpl({
   onToggleLock?: (obj: BoardObject) => void;
   onToggleVisibility?: (obj: BoardObject) => void;
   onRemoveObject?: (obj: BoardObject) => void;
+  onEditDocument?: (obj: BoardObject, content: string) => void;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [isEditingDoc, setIsEditingDoc] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -975,7 +983,6 @@ function ObjectViewImpl({
               src={imgUrl}
               alt={obj.label ?? ""}
               className="h-full w-full object-contain"
-              style={{ filter: "drop-shadow(0 4px 10px rgba(0,0,0,0.5))" }}
               draggable={false}
             />
           ) : (
@@ -1055,6 +1062,7 @@ function ObjectViewImpl({
 
   // document — parchment card
   const content = ((obj.data ?? {}) as { content?: string }).content ?? "";
+  const canEditDoc = isMaster && !obj.locked;
   return (
     <div
       id={`bo-${obj.id}`}
@@ -1069,11 +1077,50 @@ function ObjectViewImpl({
         <span className="grimoire-title text-base text-ink truncate">
           {obj.label ?? "Documento"}
         </span>
-        <span className="text-[9px] uppercase tracking-widest text-ink/50">Pergaminho</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9px] uppercase tracking-widest text-ink/50">Pergaminho</span>
+          {canEditDoc && (
+            <button
+              onClick={() => setIsEditingDoc((v) => !v)}
+              aria-label={isEditingDoc ? "Parar de editar" : "Editar pergaminho"}
+              title={isEditingDoc ? "Parar de editar" : "Editar pergaminho"}
+              className="text-ink/50 hover:text-ink"
+            >
+              {isEditingDoc ? (
+                <Check className="size-3.5" aria-hidden="true" />
+              ) : (
+                <Pencil className="size-3.5" aria-hidden="true" />
+              )}
+            </button>
+          )}
+        </div>
       </div>
-      <div className="scrollbar-arcane grimoire-title flex-1 overflow-auto whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed text-ink/90">
-        {content || <span className="italic text-ink/40">Este pergaminho está em branco.</span>}
-      </div>
+      {isEditingDoc ? (
+        <textarea
+          autoFocus
+          defaultValue={content}
+          onBlur={(e) => {
+            setIsEditingDoc(false);
+            if (e.target.value !== content) onEditDocument?.(obj, e.target.value);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") e.currentTarget.blur();
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="grimoire-title flex-1 resize-none bg-transparent px-4 py-3 text-sm leading-relaxed text-ink/90 outline-none"
+        />
+      ) : (
+        <div
+          onDoubleClick={() => canEditDoc && setIsEditingDoc(true)}
+          className="scrollbar-arcane grimoire-title flex-1 overflow-auto whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed text-ink/90"
+        >
+          {content || (
+            <span className="italic text-ink/40">
+              {canEditDoc ? "Em branco — toque duas vezes para escrever." : "Este pergaminho está em branco."}
+            </span>
+          )}
+        </div>
+      )}
       {resizeHandle}
     </div>
   );

@@ -360,6 +360,23 @@ function CampaignPage() {
     }
   };
 
+  // A "pergaminho" placed on the board used to be a one-time snapshot of the
+  // source file's text with no way to change it afterward — editing meant
+  // deleting the card and dropping the file again. This lets it be edited
+  // in place, independent of whatever file it originally came from.
+  const handleEditDocument = async (obj: BoardObject, content: string) => {
+    const nextData = { ...(obj.data as Record<string, unknown> | null), content };
+    patchBoardObject(obj.id, { data: nextData as never });
+    const { error } = await supabase
+      .from("board_objects")
+      .update({ data: nextData as never })
+      .eq("id", obj.id);
+    if (error) {
+      toast.error("Não foi possível salvar o pergaminho: " + error.message);
+      patchBoardObject(obj.id, { data: obj.data });
+    }
+  };
+
   const handleObjectMove = (id: string, x: number, y: number) => {
     const patch = (old: BoardObject[] | undefined) =>
       old?.map((o) => (o.id === id ? { ...o, x, y } : o));
@@ -698,6 +715,7 @@ function CampaignPage() {
             onToggleLock={handleToggleLock}
             onToggleVisibility={handleToggleObjectVisibility}
             onRemoveObject={handleRemoveObject}
+            onEditDocument={handleEditDocument}
           />
           <ThemePicker
             campaignId={campaignId}
