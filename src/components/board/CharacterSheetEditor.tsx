@@ -29,7 +29,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Trash2, Dices, Eye, EyeOff, Loader2, X } from "lucide-react";
+import { Plus, Trash2, Dices, Eye, EyeOff, Loader2, X, Camera, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 interface Props {
@@ -68,6 +68,60 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
   // "Combate" using a modifier from "Atributos"), so rolling resolves
   // against every field on the sheet, not just the active tab's.
   const allFields = tabs.flatMap((t) => t.fields);
+
+  const [portraitUrl, setPortraitUrl] = useState<string | null>(null);
+  const [uploadingPortrait, setUploadingPortrait] = useState(false);
+
+  useEffect(() => {
+    setPortraitUrl(null);
+    if (!character?.portrait_path) return;
+    let cancelled = false;
+    supabase.storage
+      .from("campaign-assets")
+      .createSignedUrl(character.portrait_path, 60 * 60)
+      .then(({ data, error }) => {
+        if (cancelled || error || !data?.signedUrl) return;
+        setPortraitUrl(data.signedUrl);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [character?.portrait_path]);
+
+  const uploadPortrait = async (file: File) => {
+    if (!character) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Envie um arquivo de imagem.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Imagem muito grande (máx. 5MB).");
+      return;
+    }
+    setUploadingPortrait(true);
+    const ext = file.name.split(".").pop() ?? "png";
+    const path = `portraits/${character.id}/${crypto.randomUUID()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from("campaign-assets")
+      .upload(path, file, { cacheControl: "3600" });
+    if (upErr) {
+      toast.error("Não foi possível enviar a imagem: " + upErr.message);
+      setUploadingPortrait(false);
+      return;
+    }
+    const oldPath = character.portrait_path;
+    const { error } = await supabase
+      .from("characters")
+      .update({ portrait_path: path })
+      .eq("id", character.id);
+    setUploadingPortrait(false);
+    if (error) {
+      toast.error("Não foi possível salvar o retrato: " + error.message);
+      return;
+    }
+    if (oldPath) await supabase.storage.from("campaign-assets").remove([oldPath]);
+    qc.invalidateQueries({ queryKey: ["characters"] });
+  };
 
   const { data: rolls = [] } = useQuery({
     queryKey: ["dice_rolls", character?.id],
@@ -213,20 +267,55 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
       <SheetContent side="fullscreen" className="gold-frame overflow-y-auto p-0">
         {character && (
           <div className="mx-auto flex min-h-full max-w-5xl flex-col px-6 py-8 sm:px-10">
-            <SheetHeader className="space-y-1 text-left">
-              <SheetTitle className="grimoire-title text-primary">
-                {canEdit ? (
-                  <Input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    onBlur={() => name.trim() && persist.mutate({ name: name.trim() })}
-                    className="border-none bg-transparent px-0 text-2xl font-normal shadow-none focus-visible:ring-0"
-                  />
+            <SheetHeader className="flex-row items-center gap-4 space-y-0 text-left">
+              <label
+                className={`group relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-full ring-2 ring-primary/40 ${
+                  canEdit ? "cursor-pointer" : ""
+                }`}
+              >
+                {portraitUrl ? (
+                  <img src={portraitUrl} alt="" className="h-full w-full object-cover" />
                 ) : (
-                  <span className="text-2xl">{character.name}</span>
+                  <UserRound className="size-8 text-primary/50" aria-hidden="true" />
                 )}
-              </SheetTitle>
-              <SheetDescription>Ficha de personagem — totalmente customizável.</SheetDescription>
+                {canEdit && (
+                  <>
+                    <div className="absolute inset-0 grid place-items-center bg-ink/0 opacity-0 transition-all group-hover:bg-ink/60 group-hover:opacity-100">
+                      {uploadingPortrait ? (
+                        <Loader2 className="size-5 animate-spin text-cream" aria-hidden="true" />
+                      ) : (
+                        <Camera className="size-5 text-cream" aria-hidden="true" />
+                      )}
+                    </div>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      disabled={uploadingPortrait}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) uploadPortrait(file);
+                        e.target.value = "";
+                      }}
+                    />
+                  </>
+                )}
+              </label>
+              <div className="min-w-0 flex-1">
+                <SheetTitle className="grimoire-title text-primary">
+                  {canEdit ? (
+                    <Input
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      onBlur={() => name.trim() && persist.mutate({ name: name.trim() })}
+                      className="border-none bg-transparent px-0 text-2xl font-normal shadow-none focus-visible:ring-0"
+                    />
+                  ) : (
+                    <span className="text-2xl">{character.name}</span>
+                  )}
+                </SheetTitle>
+                <SheetDescription>Ficha de personagem — totalmente customizável.</SheetDescription>
+              </div>
             </SheetHeader>
 
             {canEdit && (

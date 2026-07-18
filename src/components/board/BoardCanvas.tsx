@@ -17,6 +17,7 @@ import {
   Ghost,
   Pencil,
   Check,
+  UserRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -56,9 +57,13 @@ interface Props {
   onToggleVisibility?: (obj: BoardObject) => void;
   onRemoveObject?: (obj: BoardObject) => void;
   onEditDocument?: (obj: BoardObject, content: string) => void;
+  onLinkCharacter?: (obj: BoardObject, characterId: string | null) => void;
   onSetLight?: (
     obj: BoardObject,
-    patch: Partial<Pick<BoardObject, "has_light" | "light_radius" | "hidden_when_dark">>,
+    patch: Partial<Pick<
+      BoardObject,
+      "has_light" | "light_radius" | "hidden_when_dark" | "light_shape" | "light_angle" | "light_cone_width"
+    >>,
   ) => void;
 }
 
@@ -102,6 +107,7 @@ export function BoardCanvas({
   onRemoveObject,
   onEditDocument,
   onSetLight,
+  onLinkCharacter,
 }: Props) {
   const theme = getBoardTheme(themeId);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -144,6 +150,16 @@ export function BoardCanvas({
     startY: number;
     origW: number;
     origH: number;
+  } | null>(null);
+
+  // Cone direction is rotated by dragging its handle around the pin. Only
+  // the center (screen coords, captured once at drag start) is needed —
+  // the angle is just atan2 of the pointer relative to it, which is
+  // unaffected by pan/zoom since those don't rotate the viewport.
+  const [rotateObj, setRotateObj] = useState<{
+    id: string;
+    centerX: number;
+    centerY: number;
   } | null>(null);
 
   // Pan (one finger/mouse) + pinch-zoom (two fingers) on canvas background
@@ -402,6 +418,45 @@ export function BoardCanvas({
     };
   }, [resizeObj, viewport.scale, onObjectResize]);
 
+  // Cone rotation (drag the direction handle around the pin)
+  const startObjRotate = useCallback((obj: BoardObject, e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const el = document.getElementById(`bo-${obj.id}-light-anchor`);
+    const rect = el?.getBoundingClientRect();
+    if (!rect) return;
+    setRotateObj({
+      id: obj.id,
+      centerX: rect.left + rect.width / 2,
+      centerY: rect.top + rect.height / 2,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!rotateObj) return;
+    let latestAngle = 0;
+    const onMove = (e: PointerEvent) => {
+      const rad = Math.atan2(e.clientY - rotateObj.centerY, e.clientX - rotateObj.centerX);
+      latestAngle = (rad * 180) / Math.PI;
+      const anchor = document.getElementById(`bo-${rotateObj.id}-light-anchor`);
+      if (anchor) anchor.style.transform = `rotate(${latestAngle}deg)`;
+    };
+    const onUp = () => {
+      onSetLight?.(objects.find((o) => o.id === rotateObj.id) as BoardObject, {
+        light_angle: latestAngle,
+      });
+      setRotateObj(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [rotateObj, objects, onSetLight]);
+
   // Drop from sidebar
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -441,45 +496,84 @@ export function BoardCanvas({
     () =>
       objects
         .filter((o) => o.has_light)
-        .map((o) => ({ ...getObjectCenter(o), radius: o.light_radius })),
+        .map((o) => ({
+          id: o.id,
+          ...getObjectCenter(o),
+          radius: o.light_radius,
+          shape: o.light_shape,
+          angle: o.light_angle,
+          coneWidth: o.light_cone_width,
+        })),
     [objects, getObjectCenter],
   );
   const isLit = useCallback(
     (o: BoardObject) => {
       if (lightSources.length === 0) return false;
       const { cx, cy } = getObjectCenter(o);
-      return lightSources.some((l) => (cx - l.cx) ** 2 + (cy - l.cy) ** 2 <= l.radius ** 2);
+      return lightSources.some((l) => {
+        const dx = cx - l.cx;
+        const dy = cy - l.cy;
+        if (dx * dx + dy * dy > l.radius ** 2) return false;
+        if (l.shape !== "cone") return true;
+        const pointAngle = (Math.atan2(dy, dx) * 180) / Math.PI;
+        const diff = (((pointAngle - l.angle + 180) % 360) + 360) % 360 - 180;
+        return Math.abs(diff) <= l.coneWidth / 2;
+      });
     },
     [lightSources, getObjectCenter],
   );
 
   const FOG_BOUNDS = { left: -3000, top: -3000, size: 6000 };
 
-  const fogStyle = useMemo((): React.CSSProperties => {
-    const base: React.CSSProperties = {
+  // Each light is its own layer (mix-blend-mode: screen unions it with the
+  // others) instead of one flat stack of CSS background-images — a circle
+  // is just a radial gradient, but a cone additionally needs a conic-
+  // gradient mask to clip that gradient down to a wedge, and CSS has no way
+  // to give only *some* of several stacked background-images their own
+  // mask. `isolation: isolate` on the wrapper keeps the screen-blending
+  // contained to these layers rather than bleeding into the board below —
+  // the wrapper's own mix-blend-mode: multiply (applied to the isolated
+  // group as a whole) is what actually darkens the board content.
+  const lightLayers = useMemo(
+    () =>
+      lightSources.map((l) => {
+        const x = l.cx - FOG_BOUNDS.left;
+        const y = l.cy - FOG_BOUNDS.top;
+        const style: React.CSSProperties = {
+          position: "absolute",
+          inset: 0,
+          mixBlendMode: "screen",
+          backgroundImage: `radial-gradient(circle at ${x}px ${y}px, white 0%, transparent ${l.radius}px)`,
+        };
+        if (l.shape === "cone") {
+          // My angle convention is 0°=east, clockwise (matches atan2 on
+          // screen coords). CSS conic-gradient's 0deg points north/up and
+          // also increases clockwise, so converting is just a +90° shift.
+          const cssFrom = (((l.angle - l.coneWidth / 2 + 90) % 360) + 360) % 360;
+          const mask = `conic-gradient(from ${cssFrom}deg at ${x}px ${y}px, white 0deg, white ${l.coneWidth}deg, transparent ${l.coneWidth}deg, transparent 360deg)`;
+          style.maskImage = mask;
+          style.WebkitMaskImage = mask;
+        }
+        return { id: l.id, style };
+      }),
+    [lightSources],
+  );
+
+  const fogStyle = useMemo(
+    (): React.CSSProperties => ({
       left: FOG_BOUNDS.left,
       top: FOG_BOUNDS.top,
       width: FOG_BOUNDS.size,
       height: FOG_BOUNDS.size,
       zIndex: 5000,
       mixBlendMode: "multiply",
+      isolation: "isolate",
       opacity: 0.9,
-    };
-    if (lightSources.length === 0) return { ...base, backgroundColor: "var(--ink)" };
-    return {
-      ...base,
-      backgroundImage: lightSources
-        .map(
-          (l) =>
-            `radial-gradient(circle at ${l.cx - FOG_BOUNDS.left}px ${
-              l.cy - FOG_BOUNDS.top
-            }px, white 0%, var(--ink) ${l.radius}px)`,
-        )
-        .join(", "),
-      backgroundBlendMode: lightSources.length > 1 ? "screen" : undefined,
-    };
+      backgroundColor: "var(--ink)",
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lightSources]);
+    [],
+  );
 
   return (
     <div
@@ -527,7 +621,13 @@ export function BoardCanvas({
 
         {/* Dynamic light/vision — darkens everything for non-master viewers,
             with soft holes carved out around each light-emitting object. */}
-        {!isMaster && <div aria-hidden="true" className="pointer-events-none absolute" style={fogStyle} />}
+        {!isMaster && (
+          <div aria-hidden="true" className="pointer-events-none absolute" style={fogStyle}>
+            {lightLayers.map((l) => (
+              <div key={l.id} style={l.style} />
+            ))}
+          </div>
+        )}
 
         {objects
           .slice()
@@ -545,6 +645,7 @@ export function BoardCanvas({
               onRemoveObject={onRemoveObject}
               onEditDocument={onEditDocument}
               onSetLight={onSetLight}
+              onLinkCharacter={onLinkCharacter}
               isDragging={dragObj?.id === o.id}
               showGrid={showGrid}
               characters={characters}
@@ -552,6 +653,7 @@ export function BoardCanvas({
               isSelected={selectedId === o.id}
               onSelect={() => setSelectedId(o.id)}
               onResizeStart={startObjResize}
+              onRotateStart={startObjRotate}
               isResizing={resizeObj?.id === o.id}
               hiddenByFog={!isMaster && o.hidden_when_dark && !isLit(o)}
             />
@@ -642,6 +744,7 @@ function ObjectViewImpl({
   isSelected = false,
   onSelect,
   onResizeStart,
+  onRotateStart,
   isResizing = false,
   hiddenByFog = false,
   onToggleLock,
@@ -649,6 +752,7 @@ function ObjectViewImpl({
   onRemoveObject,
   onEditDocument,
   onSetLight,
+  onLinkCharacter,
 }: {
   obj: BoardObject;
   isMaster: boolean;
@@ -662,6 +766,7 @@ function ObjectViewImpl({
   isSelected?: boolean;
   onSelect?: () => void;
   onResizeStart?: (obj: BoardObject, e: React.PointerEvent) => void;
+  onRotateStart?: (obj: BoardObject, e: React.PointerEvent) => void;
   isResizing?: boolean;
   /** True when this object has `hidden_when_dark` set and no light reaches
    * it right now — only ever true for non-master viewers. */
@@ -672,19 +777,28 @@ function ObjectViewImpl({
   onEditDocument?: (obj: BoardObject, content: string) => void;
   onSetLight?: (
     obj: BoardObject,
-    patch: Partial<Pick<BoardObject, "has_light" | "light_radius" | "hidden_when_dark">>,
+    patch: Partial<Pick<
+      BoardObject,
+      "has_light" | "light_radius" | "hidden_when_dark" | "light_shape" | "light_angle" | "light_cone_width"
+    >>,
   ) => void;
+  onLinkCharacter?: (obj: BoardObject, characterId: string | null) => void;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [isEditingDoc, setIsEditingDoc] = useState(false);
+  const linkedCharacter = characters.find((c) => c.id === obj.character_id) ?? null;
 
   useEffect(() => {
     let cancelled = false;
     const data = (obj.data ?? {}) as { storage_path?: string };
-    if ((obj.kind === "map" || obj.kind === "image") && data.storage_path) {
+    const portraitPath = obj.kind === "pin" ? linkedCharacter?.portrait_path : undefined;
+    const path = (obj.kind === "map" || obj.kind === "image") && data.storage_path
+      ? data.storage_path
+      : portraitPath;
+    if (path) {
       supabase.storage
         .from("campaign-assets")
-        .createSignedUrl(data.storage_path, 60 * 60)
+        .createSignedUrl(path, 60 * 60)
         .then(({ data: sig, error }) => {
           if (cancelled) return;
           if (error) {
@@ -693,11 +807,13 @@ function ObjectViewImpl({
           }
           if (sig?.signedUrl) setImgUrl(sig.signedUrl);
         });
+    } else {
+      setImgUrl(null);
     }
     return () => {
       cancelled = true;
     };
-  }, [obj.id, obj.kind, obj.data]);
+  }, [obj.id, obj.kind, obj.data, linkedCharacter?.portrait_path]);
 
   // Must come after every hook above so the hook count stays constant
   // across renders even as hiddenByFog flips true/false.
@@ -808,19 +924,64 @@ function ObjectViewImpl({
             />
           </div>
           {obj.has_light && (
-            <div className="mb-3">
-              <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
-                <span>Raio da luz</span>
-                <span>{obj.light_radius}px</span>
+            <>
+              <div className="mb-3">
+                <span className="mb-1 block text-[10px] text-muted-foreground">Formato</span>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => onSetLight?.(obj, { light_shape: "circle" })}
+                    className={`flex-1 rounded px-2 py-1 text-xs ring-1 ${
+                      obj.light_shape === "circle"
+                        ? "bg-primary/25 ring-primary/50 text-primary"
+                        : "ring-primary/20 text-muted-foreground hover:bg-primary/10"
+                    }`}
+                  >
+                    ◯ Círculo
+                  </button>
+                  <button
+                    onClick={() => onSetLight?.(obj, { light_shape: "cone" })}
+                    className={`flex-1 rounded px-2 py-1 text-xs ring-1 ${
+                      obj.light_shape === "cone"
+                        ? "bg-primary/25 ring-primary/50 text-primary"
+                        : "ring-primary/20 text-muted-foreground hover:bg-primary/10"
+                    }`}
+                  >
+                    ◣ Cone
+                  </button>
+                </div>
               </div>
-              <Slider
-                defaultValue={[obj.light_radius]}
-                min={50}
-                max={1000}
-                step={25}
-                onValueCommit={([v]) => onSetLight?.(obj, { light_radius: v })}
-              />
-            </div>
+              <div className="mb-3">
+                <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>{obj.light_shape === "cone" ? "Alcance do cone" : "Raio da luz"}</span>
+                  <span>{obj.light_radius}px</span>
+                </div>
+                <Slider
+                  defaultValue={[obj.light_radius]}
+                  min={50}
+                  max={1000}
+                  step={25}
+                  onValueCommit={([v]) => onSetLight?.(obj, { light_radius: v })}
+                />
+              </div>
+              {obj.light_shape === "cone" && (
+                <div className="mb-3">
+                  <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                    <span>Abertura do cone</span>
+                    <span>{obj.light_cone_width}°</span>
+                  </div>
+                  <Slider
+                    defaultValue={[obj.light_cone_width]}
+                    min={15}
+                    max={180}
+                    step={5}
+                    onValueCommit={([v]) => onSetLight?.(obj, { light_cone_width: v })}
+                  />
+                  <p className="mt-1 text-[10px] italic text-muted-foreground">
+                    Arraste o pontinho dourado ao lado do pin para girar a direção.
+                  </p>
+                </div>
+              )}
+            </>
           )}
           <div className="flex items-center justify-between">
             <label htmlFor={`fog-${obj.id}`} className="flex items-center gap-1.5 text-xs">
@@ -835,6 +996,30 @@ function ObjectViewImpl({
               className="size-4 accent-primary"
             />
           </div>
+          {obj.kind === "pin" && (
+            <div className="mt-3 border-t border-primary/10 pt-3">
+              <label
+                htmlFor={`char-${obj.id}`}
+                className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground"
+              >
+                <UserRound className="size-3 text-primary/70" aria-hidden="true" />
+                Personagem vinculado
+              </label>
+              <select
+                id={`char-${obj.id}`}
+                value={obj.character_id ?? ""}
+                onChange={(e) => onLinkCharacter?.(obj, e.target.value || null)}
+                className="w-full rounded border border-primary/20 bg-ink px-2 py-1.5 text-xs text-primary"
+              >
+                <option value="">Nenhum (letra)</option>
+                {characters.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </PopoverContent>
       </Popover>
       <button
@@ -889,6 +1074,27 @@ function ObjectViewImpl({
     />
   );
 
+  const lightHandle = obj.kind === "pin" &&
+    isMaster &&
+    !obj.locked &&
+    obj.has_light &&
+    obj.light_shape === "cone" && (
+      <div
+        id={`bo-${obj.id}-light-anchor`}
+        className="pointer-events-none absolute inset-0"
+        style={{ transform: `rotate(${obj.light_angle}deg)` }}
+      >
+        <div
+          onPointerDown={(e) => onRotateStart?.(obj, e)}
+          role="presentation"
+          aria-label="Girar direção do cone de visão"
+          title="Arraste para girar a direção"
+          className="pointer-events-auto absolute top-1/2 left-1/2 size-3.5 -translate-y-1/2 cursor-grab rounded-full bg-amber-300 ring-2 ring-ink-2"
+          style={{ transform: `translateX(${(obj.width || 40) / 2 + 14}px)`, touchAction: "none" }}
+        />
+      </div>
+    );
+
   const style: React.CSSProperties = {
     transform: `translate(${obj.x}px, ${obj.y}px)${isDragging ? " scale(1.03)" : ""}`,
     width: obj.width,
@@ -911,19 +1117,24 @@ function ObjectViewImpl({
         {controls}
         <div
           {...commonHandleProps}
-          className={`candle-glow relative grid cursor-grab place-items-center rounded-full bg-wax ring-2 ring-primary/40 ${
+          className={`candle-glow relative grid cursor-grab place-items-center overflow-hidden rounded-full bg-wax ring-2 ring-primary/40 ${
             obj.locked ? "cursor-not-allowed" : ""
           }`}
           style={{ ...commonHandleProps.style, width: size, height: size }}
         >
-          <span className="grimoire-title text-sm text-primary">
-            {(obj.label ?? "•").slice(0, 1).toUpperCase()}
-          </span>
+          {linkedCharacter?.portrait_path && imgUrl ? (
+            <img src={imgUrl} alt="" className="h-full w-full object-cover" draggable={false} />
+          ) : (
+            <span className="grimoire-title text-sm text-primary">
+              {(linkedCharacter?.name ?? obj.label ?? "•").slice(0, 1).toUpperCase()}
+            </span>
+          )}
+          {lightHandle}
           {resizeHandle}
         </div>
-        {obj.label && (
+        {(linkedCharacter?.name ?? obj.label) && (
           <div className="mt-2 max-w-[10rem] text-center text-[11px] font-medium tracking-wide text-primary/80">
-            {obj.label}
+            {linkedCharacter?.name ?? obj.label}
           </div>
         )}
       </div>

@@ -367,7 +367,10 @@ function CampaignPage() {
   // until Realtime looped back.
   const handleSetLight = async (
     obj: BoardObject,
-    patch: Partial<Pick<BoardObject, "has_light" | "light_radius" | "hidden_when_dark">>,
+    patch: Partial<Pick<
+      BoardObject,
+      "has_light" | "light_radius" | "hidden_when_dark" | "light_shape" | "light_angle" | "light_cone_width"
+    >>,
   ) => {
     patchBoardObject(obj.id, patch);
     const { error } = await supabase.from("board_objects").update(patch).eq("id", obj.id);
@@ -377,7 +380,26 @@ function CampaignPage() {
         has_light: obj.has_light,
         light_radius: obj.light_radius,
         hidden_when_dark: obj.hidden_when_dark,
+        light_shape: obj.light_shape,
+        light_angle: obj.light_angle,
+        light_cone_width: obj.light_cone_width,
       });
+    }
+  };
+
+  // Links a pin to an existing character sheet — it then shows that
+  // character's portrait/name instead of a plain letter token. Reuses
+  // board_objects.character_id, which already existed for "sheet" cards
+  // and had no kind restriction.
+  const handleLinkCharacter = async (obj: BoardObject, characterId: string | null) => {
+    patchBoardObject(obj.id, { character_id: characterId });
+    const { error } = await supabase
+      .from("board_objects")
+      .update({ character_id: characterId })
+      .eq("id", obj.id);
+    if (error) {
+      toast.error("Não foi possível vincular o personagem: " + error.message);
+      patchBoardObject(obj.id, { character_id: obj.character_id });
     }
   };
 
@@ -738,6 +760,7 @@ function CampaignPage() {
             onRemoveObject={handleRemoveObject}
             onEditDocument={handleEditDocument}
             onSetLight={handleSetLight}
+            onLinkCharacter={handleLinkCharacter}
           />
           <ThemePicker
             campaignId={campaignId}

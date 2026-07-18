@@ -23,7 +23,10 @@ export type Database = {
           id: string;
           kind: Database["public"]["Enums"]["board_object_kind"];
           label: string | null;
+          light_angle: number;
+          light_cone_width: number;
           light_radius: number;
+          light_shape: string;
           locked: boolean;
           rotation: number;
           updated_at: string;
@@ -47,7 +50,10 @@ export type Database = {
           id?: string;
           kind: Database["public"]["Enums"]["board_object_kind"];
           label?: string | null;
+          light_angle?: number;
+          light_cone_width?: number;
           light_radius?: number;
+          light_shape?: string;
           locked?: boolean;
           rotation?: number;
           updated_at?: string;
@@ -71,7 +77,10 @@ export type Database = {
           id?: string;
           kind?: Database["public"]["Enums"]["board_object_kind"];
           label?: string | null;
+          light_angle?: number;
+          light_cone_width?: number;
           light_radius?: number;
+          light_shape?: string;
           locked?: boolean;
           rotation?: number;
           updated_at?: string;
