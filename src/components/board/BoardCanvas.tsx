@@ -18,6 +18,8 @@ import {
   Pencil,
   Check,
   UserRound,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -27,6 +29,9 @@ import { toast } from "sonner";
 interface Props {
   objects: BoardObject[];
   isMaster: boolean;
+  /** Logged-in viewer's user id. Lets a player move/rotate the one pin
+   * linked to a character they own, even though they aren't the master. */
+  currentUserId?: string | null;
   onDropFromSidebar: (fileId: string, worldX: number, worldY: number) => void;
   /**
    * Called with the settled (x, y) whenever an object finishes moving —
@@ -65,6 +70,18 @@ interface Props {
       "has_light" | "light_radius" | "hidden_when_dark" | "light_shape" | "light_angle" | "light_cone_width"
     >>,
   ) => void;
+  /** Cache-only patch for a player rotating their own token's cone — the
+   * actual write goes through the rotate_own_light RPC (see startObjRotate),
+   * this just keeps the UI from flashing back before Realtime confirms it. */
+  onRotateOwnLight?: (id: string, angle: number) => void;
+  /** Campaign-wide day/night switch (campaigns.dynamic_lighting). true (the
+   * default) keeps the existing darkness overlay + hidden_when_dark
+   * fog-of-war active for non-master viewers; false ("day mode") shows
+   * everything to everyone regardless of light. Defaults to true so a
+   * campaign that predates this column behaves exactly as before. */
+  dynamicLighting?: boolean;
+  /** Master-only toggle for dynamicLighting — omitted entirely for players. */
+  onToggleDynamicLighting?: () => void;
 }
 
 interface Viewport {
@@ -94,6 +111,7 @@ const MIN_OBJECT_SIZE: Partial<Record<BoardObject["kind"], { width: number; heig
 export function BoardCanvas({
   objects,
   isMaster,
+  currentUserId,
   onDropFromSidebar,
   onObjectMove,
   onObjectResize,
@@ -108,6 +126,9 @@ export function BoardCanvas({
   onEditDocument,
   onSetLight,
   onLinkCharacter,
+  onRotateOwnLight,
+  dynamicLighting = true,
+  onToggleDynamicLighting,
 }: Props) {
   const theme = getBoardTheme(themeId);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -284,10 +305,23 @@ export function BoardCanvas({
     return () => node.removeEventListener("wheel", handleWheel);
   }, []);
 
+  // Whether this viewer may move/rotate a given object: the master can
+  // touch anything, a player only the one pin linked to a character they
+  // own — same rule ObjectViewImpl uses to decide whether to show the
+  // move handle / cone-rotation handle in the first place.
+  const canControlObject = useCallback(
+    (obj: BoardObject) =>
+      isMaster ||
+      (!!currentUserId &&
+        !!obj.character_id &&
+        characters.find((c) => c.id === obj.character_id)?.owner_id === currentUserId),
+    [isMaster, currentUserId, characters],
+  );
+
   // Object drag
   const startObjDrag = useCallback(
     (obj: BoardObject, e: React.PointerEvent) => {
-      if (!isMaster || obj.locked) {
+      if (!canControlObject(obj) || obj.locked) {
         return;
       }
       e.stopPropagation();
@@ -299,7 +333,7 @@ export function BoardCanvas({
         origY: obj.y,
       });
     },
-    [isMaster],
+    [canControlObject],
   );
 
   useEffect(() => {
@@ -333,10 +367,12 @@ export function BoardCanvas({
         // else triggers a re-render before Supabase confirms the write, the
         // object doesn't flash back to its pre-drag position.
         onObjectMove?.(dragObj.id, x, y);
-        const { error } = await supabase
-          .from("board_objects")
-          .update({ x, y })
-          .eq("id", dragObj.id);
+        // Master writes any object directly; a player moving their own
+        // linked token goes through the RPC, since board_objects writes
+        // are otherwise master-only at the RLS level (see move_own_token).
+        const { error } = isMaster
+          ? await supabase.from("board_objects").update({ x, y }).eq("id", dragObj.id)
+          : await supabase.rpc("move_own_token", { _object_id: dragObj.id, _x: x, _y: y });
         if (error) {
           toast.error("Não foi possível salvar a posição: " + error.message);
           // Revert both the DOM and the optimistic cache patch on failure.
@@ -355,7 +391,7 @@ export function BoardCanvas({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [dragObj, viewport.scale, onObjectMove, showGrid]);
+  }, [dragObj, viewport.scale, onObjectMove, showGrid, isMaster]);
 
   // Object resize (drag the corner handle)
   const startObjResize = useCallback(
@@ -418,8 +454,12 @@ export function BoardCanvas({
     };
   }, [resizeObj, viewport.scale, onObjectResize]);
 
-  // Cone rotation (drag the direction handle around the pin)
+  // Facing rotation (drag the direction handle around the pin). Writes
+  // light_angle regardless of has_light — it doubles as "which way this
+  // token is facing" and, only when has_light + light_shape "cone" are also
+  // on, as the cone's direction too.
   const startObjRotate = useCallback((obj: BoardObject, e: React.PointerEvent) => {
+    if (!canControlObject(obj) || obj.locked) return;
     e.stopPropagation();
     e.preventDefault();
     const el = document.getElementById(`bo-${obj.id}-light-anchor`);
@@ -430,7 +470,7 @@ export function BoardCanvas({
       centerX: rect.left + rect.width / 2,
       centerY: rect.top + rect.height / 2,
     });
-  }, []);
+  }, [canControlObject]);
 
   useEffect(() => {
     if (!rotateObj) return;
@@ -441,10 +481,25 @@ export function BoardCanvas({
       const anchor = document.getElementById(`bo-${rotateObj.id}-light-anchor`);
       if (anchor) anchor.style.transform = `rotate(${latestAngle}deg)`;
     };
-    const onUp = () => {
-      onSetLight?.(objects.find((o) => o.id === rotateObj.id) as BoardObject, {
-        light_angle: latestAngle,
-      });
+    const onUp = async () => {
+      const obj = objects.find((o) => o.id === rotateObj.id) as BoardObject;
+      if (isMaster) {
+        onSetLight?.(obj, { light_angle: latestAngle });
+      } else {
+        // Same reasoning as move_own_token: a player rotating their own
+        // token's cone can't write board_objects directly (master-only
+        // RLS), so this goes through a narrow RPC instead. Patch the cache
+        // ourselves too, so it doesn't wait on Realtime to look settled.
+        onRotateOwnLight?.(rotateObj.id, latestAngle);
+        const { error } = await supabase.rpc("rotate_own_light", {
+          _object_id: rotateObj.id,
+          _angle: latestAngle,
+        });
+        if (error) {
+          toast.error("Não foi possível girar a direção: " + error.message);
+          onRotateOwnLight?.(rotateObj.id, obj.light_angle);
+        }
+      }
       setRotateObj(null);
     };
     window.addEventListener("pointermove", onMove);
@@ -455,7 +510,7 @@ export function BoardCanvas({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [rotateObj, objects, onSetLight]);
+  }, [rotateObj, objects, onSetLight, isMaster, onRotateOwnLight]);
 
   // Drop from sidebar
   const onDrop = (e: React.DragEvent) => {
@@ -523,7 +578,36 @@ export function BoardCanvas({
     [lightSources, getObjectCenter],
   );
 
-  const FOG_BOUNDS = { left: -3000, top: -3000, size: 6000 };
+  // The darkness overlay used to cover a fixed 6000px square centered on
+  // the origin — fine for a small scene, but a token placed (or a map
+  // panned to) further out than that sat outside the overlay entirely and
+  // showed up fully lit regardless of has_light/hidden_when_dark. Instead,
+  // size it from the actual extent of whatever is on the board, padded out
+  // generously so panning a bit past the edge still reads as dark, with a
+  // sane floor for an empty/near-empty scene.
+  const BOUNDS_PADDING = 2000;
+  const BOUNDS_MIN_SIZE = 6000;
+  const boardBounds = useMemo(() => {
+    if (objects.length === 0) {
+      return { left: -BOUNDS_MIN_SIZE / 2, top: -BOUNDS_MIN_SIZE / 2, size: BOUNDS_MIN_SIZE };
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const o of objects) {
+      const w = o.width;
+      const h = o.kind === "pin" ? o.width : o.height;
+      minX = Math.min(minX, o.x);
+      minY = Math.min(minY, o.y);
+      maxX = Math.max(maxX, o.x + w);
+      maxY = Math.max(maxY, o.y + h);
+    }
+    const left = minX - BOUNDS_PADDING;
+    const top = minY - BOUNDS_PADDING;
+    const size = Math.max(maxX + BOUNDS_PADDING - left, maxY + BOUNDS_PADDING - top, BOUNDS_MIN_SIZE);
+    return { left, top, size };
+  }, [objects]);
 
   // Each light is its own layer (mix-blend-mode: screen unions it with the
   // others) instead of one flat stack of CSS background-images — a circle
@@ -537,8 +621,8 @@ export function BoardCanvas({
   const lightLayers = useMemo(
     () =>
       lightSources.map((l) => {
-        const x = l.cx - FOG_BOUNDS.left;
-        const y = l.cy - FOG_BOUNDS.top;
+        const x = l.cx - boardBounds.left;
+        const y = l.cy - boardBounds.top;
         const style: React.CSSProperties = {
           position: "absolute",
           inset: 0,
@@ -556,23 +640,22 @@ export function BoardCanvas({
         }
         return { id: l.id, style };
       }),
-    [lightSources],
+    [lightSources, boardBounds],
   );
 
   const fogStyle = useMemo(
     (): React.CSSProperties => ({
-      left: FOG_BOUNDS.left,
-      top: FOG_BOUNDS.top,
-      width: FOG_BOUNDS.size,
-      height: FOG_BOUNDS.size,
+      left: boardBounds.left,
+      top: boardBounds.top,
+      width: boardBounds.size,
+      height: boardBounds.size,
       zIndex: 5000,
       mixBlendMode: "multiply",
       isolation: "isolate",
       opacity: 0.9,
       backgroundColor: "var(--ink)",
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [boardBounds],
   );
 
   return (
@@ -620,8 +703,10 @@ export function BoardCanvas({
         )}
 
         {/* Dynamic light/vision — darkens everything for non-master viewers,
-            with soft holes carved out around each light-emitting object. */}
-        {!isMaster && (
+            with soft holes carved out around each light-emitting object.
+            Master-toggleable per campaign via dynamicLighting ("day mode"
+            turns this off entirely, showing everything to everyone). */}
+        {!isMaster && dynamicLighting && (
           <div aria-hidden="true" className="pointer-events-none absolute" style={fogStyle}>
             {lightLayers.map((l) => (
               <div key={l.id} style={l.style} />
@@ -637,6 +722,7 @@ export function BoardCanvas({
               key={o.id}
               obj={o}
               isMaster={isMaster}
+              currentUserId={currentUserId}
               onDragStart={startObjDrag}
               onObjectMove={onObjectMove}
               onReorder={onReorder}
@@ -655,9 +741,10 @@ export function BoardCanvas({
               onResizeStart={startObjResize}
               onRotateStart={startObjRotate}
               isResizing={resizeObj?.id === o.id}
-              hiddenByFog={!isMaster && o.hidden_when_dark && !isLit(o)}
+              hiddenByFog={!isMaster && dynamicLighting && o.hidden_when_dark && !isLit(o)}
             />
           ))}
+
 
         {objects.length === 0 && (
           <div
@@ -697,6 +784,29 @@ export function BoardCanvas({
             >
               <Grid3x3 className="size-4" aria-hidden="true" />
             </Button>
+            {onToggleDynamicLighting && (
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={dynamicLighting ? "Mudar para modo dia" : "Mudar para modo noite"}
+                aria-pressed={dynamicLighting}
+                title={
+                  dynamicLighting
+                    ? "Modo noite ativo — escuridão e névoa de guerra ligadas para os jogadores"
+                    : "Modo dia ativo — sem escuridão, tudo visível aos jogadores"
+                }
+                className={`h-8 w-8 p-0 hover:bg-primary/10 ${
+                  dynamicLighting ? "text-primary bg-primary/15" : "text-primary/70"
+                }`}
+                onClick={onToggleDynamicLighting}
+              >
+                {dynamicLighting ? (
+                  <Moon className="size-4" aria-hidden="true" />
+                ) : (
+                  <Sun className="size-4" aria-hidden="true" />
+                )}
+              </Button>
+            )}
             <div className="h-4 w-px bg-primary/15" aria-hidden="true" />
           </>
         )}
@@ -734,6 +844,7 @@ export function BoardCanvas({
 function ObjectViewImpl({
   obj,
   isMaster,
+  currentUserId,
   onDragStart,
   onObjectMove,
   onReorder,
@@ -756,6 +867,9 @@ function ObjectViewImpl({
 }: {
   obj: BoardObject;
   isMaster: boolean;
+  /** Current viewer's user id — used to tell whether a pin's linked
+   * character belongs to them, so they can move it / turn its cone. */
+  currentUserId?: string | null;
   onDragStart: (obj: BoardObject, e: React.PointerEvent) => void;
   onObjectMove?: (id: string, x: number, y: number) => void;
   onReorder?: (obj: BoardObject, dir: "front" | "back") => void;
@@ -787,6 +901,11 @@ function ObjectViewImpl({
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [isEditingDoc, setIsEditingDoc] = useState(false);
   const linkedCharacter = characters.find((c) => c.id === obj.character_id) ?? null;
+  // A player can move their own token and turn its vision cone during a
+  // scene without being the master — but only the one pin linked to a
+  // character they own, so they can't touch anyone else's stuff.
+  const canControl =
+    isMaster || (!!currentUserId && !!linkedCharacter && linkedCharacter.owner_id === currentUserId);
 
   useEffect(() => {
     let cancelled = false;
@@ -850,7 +969,12 @@ function ObjectViewImpl({
     const x = obj.x + dir[0] * step;
     const y = obj.y + dir[1] * step;
     onObjectMove?.(obj.id, x, y);
-    const { error } = await supabase.from("board_objects").update({ x, y }).eq("id", obj.id);
+    // Master writes any object directly; a player moving their own linked
+    // token goes through the RPC instead, since board_objects writes are
+    // otherwise master-only at the RLS level (see move_own_token).
+    const { error } = isMaster
+      ? await supabase.from("board_objects").update({ x, y }).eq("id", obj.id)
+      : await supabase.rpc("move_own_token", { _object_id: obj.id, _x: x, _y: y });
     if (error) {
       toast.error("Não foi possível mover: " + error.message);
       onObjectMove?.(obj.id, obj.x, obj.y);
@@ -865,12 +989,13 @@ function ObjectViewImpl({
     style: { touchAction: "none" as const },
   };
 
-  const controls = isMaster && (
+  const controls = (isMaster || canControl) && (
     <div
       className={`pointer-events-auto absolute -top-9 left-0 flex gap-1 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
         isSelected ? "opacity-100" : "opacity-0"
       }`}
     >
+      {isMaster && (
       <button
         onClick={() => onToggleLock?.(obj)}
         aria-label={obj.locked ? "Destravar objeto" : "Travar objeto"}
@@ -883,6 +1008,8 @@ function ObjectViewImpl({
           <Unlock className="size-3.5" aria-hidden="true" />
         )}
       </button>
+      )}
+      {isMaster && (
       <button
         onClick={() => onToggleVisibility?.(obj)}
         aria-label={obj.visible_to_players ? "Ocultar dos jogadores" : "Mostrar aos jogadores"}
@@ -895,6 +1022,8 @@ function ObjectViewImpl({
           <EyeOff className="size-3.5" aria-hidden="true" />
         )}
       </button>
+      )}
+      {isMaster && (
       <Popover>
         <PopoverTrigger asChild>
           <button
@@ -1022,6 +1151,8 @@ function ObjectViewImpl({
           )}
         </PopoverContent>
       </Popover>
+      )}
+      {isMaster && (
       <button
         onClick={() => onReorder?.(obj, "back")}
         aria-label="Mandar para trás"
@@ -1030,6 +1161,8 @@ function ObjectViewImpl({
       >
         <ChevronsDown className="size-3.5" aria-hidden="true" />
       </button>
+      )}
+      {isMaster && (
       <button
         onClick={() => onReorder?.(obj, "front")}
         aria-label="Trazer para frente"
@@ -1038,6 +1171,8 @@ function ObjectViewImpl({
       >
         <ChevronsUp className="size-3.5" aria-hidden="true" />
       </button>
+      )}
+      {isMaster && (
       <button
         onClick={() => onRemoveObject?.(obj)}
         aria-label="Remover objeto"
@@ -1046,7 +1181,10 @@ function ObjectViewImpl({
       >
         <X className="size-3.5" aria-hidden="true" />
       </button>
-      {!obj.locked && (
+      )}
+      {/* Move handle: master can move anything; a player can move only the
+          token their own linked character is on (canControl covers both). */}
+      {canControl && !obj.locked && (
         <button
           type="button"
           {...commonHandleProps}
@@ -1074,24 +1212,43 @@ function ObjectViewImpl({
     />
   );
 
-  const lightHandle = obj.kind === "pin" &&
-    isMaster &&
-    !obj.locked &&
-    obj.has_light &&
-    obj.light_shape === "cone" && (
+  // Facing indicator — always present on a pin (regardless of whether it
+  // emits light), so a token's direction reads at a glance for everyone and
+  // can be dragged by whoever controls that token. When the pin also has
+  // has_light + light_shape "cone" on, the cone in lightLayers reads this
+  // same light_angle, so it just follows the facing automatically — no
+  // separate "facing" field needed.
+  const facingHandle = obj.kind === "pin" &&
+    !obj.locked && (
       <div
         id={`bo-${obj.id}-light-anchor`}
         className="pointer-events-none absolute inset-0"
         style={{ transform: `rotate(${obj.light_angle}deg)` }}
       >
+        {/* Static wedge on the rim — visible to every viewer, not just
+            whoever controls the token, so facing is legible at a glance. */}
         <div
-          onPointerDown={(e) => onRotateStart?.(obj, e)}
-          role="presentation"
-          aria-label="Girar direção do cone de visão"
-          title="Arraste para girar a direção"
-          className="pointer-events-auto absolute top-1/2 left-1/2 size-3.5 -translate-y-1/2 cursor-grab rounded-full bg-amber-300 ring-2 ring-ink-2"
-          style={{ transform: `translateX(${(obj.width || 40) / 2 + 14}px)`, touchAction: "none" }}
+          aria-hidden="true"
+          className="pointer-events-none absolute top-1/2 left-1/2 -translate-y-1/2 opacity-80"
+          style={{
+            transform: `translateX(${(obj.width || 40) / 2 - 3}px)`,
+            width: 0,
+            height: 0,
+            borderTop: "5px solid transparent",
+            borderBottom: "5px solid transparent",
+            borderLeft: "8px solid var(--primary)",
+          }}
         />
+        {canControl && (
+          <div
+            onPointerDown={(e) => onRotateStart?.(obj, e)}
+            role="presentation"
+            aria-label="Girar direção do personagem"
+            title="Arraste para girar a direção"
+            className="pointer-events-auto absolute top-1/2 left-1/2 size-3.5 -translate-y-1/2 cursor-grab rounded-full bg-amber-300 ring-2 ring-ink-2"
+            style={{ transform: `translateX(${(obj.width || 40) / 2 + 14}px)`, touchAction: "none" }}
+          />
+        )}
       </div>
     );
 
@@ -1115,21 +1272,30 @@ function ObjectViewImpl({
         style={{ ...style, width: "auto", height: "auto" }}
       >
         {controls}
-        <div
-          {...commonHandleProps}
-          className={`candle-glow relative grid cursor-grab place-items-center overflow-hidden rounded-full bg-wax ring-2 ring-primary/40 ${
-            obj.locked ? "cursor-not-allowed" : ""
-          }`}
-          style={{ ...commonHandleProps.style, width: size, height: size }}
-        >
-          {linkedCharacter?.portrait_path && imgUrl ? (
-            <img src={imgUrl} alt="" className="h-full w-full object-cover" draggable={false} />
-          ) : (
-            <span className="grimoire-title text-sm text-primary">
-              {(linkedCharacter?.name ?? obj.label ?? "•").slice(0, 1).toUpperCase()}
-            </span>
-          )}
-          {lightHandle}
+        <div className="relative" style={{ width: size, height: size }}>
+          <div
+            {...commonHandleProps}
+            className={`candle-glow grid h-full w-full cursor-grab place-items-center overflow-hidden rounded-full bg-wax ring-2 ring-primary/40 ${
+              obj.locked ? "cursor-not-allowed" : ""
+            }`}
+            style={commonHandleProps.style}
+          >
+            {linkedCharacter?.portrait_path && imgUrl ? (
+              <img src={imgUrl} alt="" className="h-full w-full object-cover" draggable={false} />
+            ) : (
+              <span className="grimoire-title text-sm text-primary">
+                {(linkedCharacter?.name ?? obj.label ?? "•").slice(0, 1).toUpperCase()}
+              </span>
+            )}
+          </div>
+          {/* facingHandle/resizeHandle live outside the circle above, not
+              inside it — that div's overflow-hidden (needed to clip the
+              portrait image into a circle) was also clipping these two,
+              since both sit partly outside the circle's own edge. Clicks
+              on the clipped-away part fell through to the circle itself,
+              which is why dragging the rotate handle just moved the token
+              instead of rotating it. */}
+          {facingHandle}
           {resizeHandle}
         </div>
         {(linkedCharacter?.name ?? obj.label) && (
@@ -1342,6 +1508,7 @@ function objectViewPropsEqual(
   return (
     prev.obj === next.obj &&
     prev.isMaster === next.isMaster &&
+    prev.currentUserId === next.currentUserId &&
     prev.isDragging === next.isDragging &&
     prev.isResizing === next.isResizing &&
     prev.isSelected === next.isSelected &&

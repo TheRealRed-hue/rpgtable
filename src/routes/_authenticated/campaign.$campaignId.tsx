@@ -1,5 +1,5 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { getLocalUser } from "@/lib/auth-helpers";
@@ -156,6 +156,22 @@ function CampaignPage() {
     [campaign, userId],
   );
   const isMaster = isOwner && !viewAsPlayer;
+
+  // Day/night switch (campaigns.dynamic_lighting) — same shape as the theme
+  // mutation in ThemePicker: master flips the campaign row, every viewer's
+  // BoardCanvas picks it up through the existing campaigns realtime
+  // subscription below, no per-object writes involved.
+  const toggleDynamicLighting = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from("campaigns")
+        .update({ dynamic_lighting: !(campaign?.dynamic_lighting ?? true) })
+        .eq("id", campaignId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["campaign", campaignId] }),
+    onError: (e: Error) => toast.error("Não foi possível trocar dia/noite: " + e.message),
+  });
 
   const { data: folders = [] } = useQuery({
     queryKey: ["folders", campaignId],
@@ -430,6 +446,17 @@ function CampaignPage() {
   const handleObjectResize = (id: string, width: number, height: number) => {
     const patch = (old: BoardObject[] | undefined) =>
       old?.map((o) => (o.id === id ? { ...o, width, height } : o));
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, true], patch);
+    qc.setQueryData<BoardObject[]>(["board_objects", campaignId, false], patch);
+  };
+
+  // Cache-only patch for when a player (not the master) rotates their own
+  // token's vision cone — the actual write goes through the
+  // rotate_own_light RPC inside BoardCanvas.tsx, since board_objects
+  // writes are otherwise master-only at the RLS level.
+  const handleRotateOwnLight = (id: string, angle: number) => {
+    const patch = (old: BoardObject[] | undefined) =>
+      old?.map((o) => (o.id === id ? { ...o, light_angle: angle } : o));
     qc.setQueryData<BoardObject[]>(["board_objects", campaignId, true], patch);
     qc.setQueryData<BoardObject[]>(["board_objects", campaignId, false], patch);
   };
@@ -748,6 +775,7 @@ function CampaignPage() {
             objects={objects}
             characters={characters}
             isMaster={isMaster}
+            currentUserId={userId}
             onDropFromSidebar={handleDropFromSidebar}
             onDropCharacterFromSidebar={handleDropCharacterFromSidebar}
             onObjectMove={handleObjectMove}
@@ -761,6 +789,9 @@ function CampaignPage() {
             onEditDocument={handleEditDocument}
             onSetLight={handleSetLight}
             onLinkCharacter={handleLinkCharacter}
+            onRotateOwnLight={handleRotateOwnLight}
+            dynamicLighting={campaign?.dynamic_lighting ?? true}
+            onToggleDynamicLighting={isMaster ? () => toggleDynamicLighting.mutate() : undefined}
           />
           <ThemePicker
             campaignId={campaignId}

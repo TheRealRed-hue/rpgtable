@@ -248,6 +248,7 @@ export type Database = {
         Row: {
           created_at: string;
           description: string | null;
+          dynamic_lighting: boolean;
           id: string;
           name: string;
           owner_id: string;
@@ -257,6 +258,7 @@ export type Database = {
         Insert: {
           created_at?: string;
           description?: string | null;
+          dynamic_lighting?: boolean;
           id?: string;
           name: string;
           owner_id: string;
@@ -266,6 +268,7 @@ export type Database = {
         Update: {
           created_at?: string;
           description?: string | null;
+          dynamic_lighting?: boolean;
           id?: string;
           name?: string;
           owner_id?: string;
@@ -434,6 +437,18 @@ export type Database = {
           created_at: string;
           updated_at: string;
         }[];
+      };
+      owns_linked_board_object: {
+        Args: { _object_id: string; _user_id: string };
+        Returns: boolean;
+      };
+      move_own_token: {
+        Args: { _object_id: string; _x: number; _y: number };
+        Returns: undefined;
+      };
+      rotate_own_light: {
+        Args: { _object_id: string; _angle: number };
+        Returns: undefined;
       };
     };
     Enums: {
