@@ -127,7 +127,7 @@ export function BlockEditor({ page, readOnly, onSave }: BlockEditorProps) {
   };
 
   return (
-    <div className="scrollbar-arcane grimoire-title mx-auto max-w-2xl flex-1 overflow-auto px-6 py-10 text-ink/90 sm:px-10">
+    <div className="scrollbar-arcane grimoire-title mx-auto max-w-4xl flex-1 overflow-auto px-6 py-10 text-ink/90 sm:px-12">
       <div className="flex flex-col gap-1">
         {blocks.map((block, i) => (
           <BlockRow

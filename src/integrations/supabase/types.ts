@@ -315,6 +315,7 @@ export type Database = {
           icon: string;
           id: string;
           is_folder: boolean;
+          is_locked: boolean;
           is_published: boolean;
           parent_id: string | null;
           sort_order: number;
@@ -329,6 +330,7 @@ export type Database = {
           icon?: string;
           id?: string;
           is_folder?: boolean;
+          is_locked?: boolean;
           is_published?: boolean;
           parent_id?: string | null;
           sort_order?: number;
@@ -343,6 +345,7 @@ export type Database = {
           icon?: string;
           id?: string;
           is_folder?: boolean;
+          is_locked?: boolean;
           is_published?: boolean;
           parent_id?: string | null;
           sort_order?: number;

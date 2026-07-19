@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChevronRight, Trash2, FolderPlus, FilePlus2, Eye, EyeOff } from "lucide-react";
+import { ChevronRight, Trash2, FolderPlus, FilePlus2, Eye, EyeOff, Lock, LockOpen } from "lucide-react";
 import { toast } from "sonner";
 
 interface Props {
@@ -40,6 +40,12 @@ export function GrimoireSidebar({ campaignId, pages, selectedId, onSelect, isMas
   const [newPageOpen, setNewPageOpen] = useState(false);
   const [targetParent, setTargetParent] = useState<string | null>(null);
   const [name, setName] = useState("");
+  // Drag-and-drop re-parenting (master only). `draggedId` tracks what's
+  // being carried; `dragOverId` is which drop target is currently
+  // highlighted — `"__root"` stands in for the sidebar's empty background,
+  // meaning "take this out of its chapter".
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   const folders = pages.filter((p) => p.is_folder);
   const leaves = pages.filter((p) => !p.is_folder);
@@ -132,6 +138,58 @@ export function GrimoireSidebar({ campaignId, pages, selectedId, onSelect, isMas
     onSuccess: () => invalidate(),
     onError: (e: Error) => toast.error(e.message),
   });
+
+  // Locking a chapter keeps its title visible to players (so they know it
+  // exists) but hides everything inside it — enforced server-side by the
+  // campaign_page_visible_to_player() RLS check, not just hidden in the UI.
+  const toggleLock = useMutation({
+    mutationFn: async (folder: CampaignPage) => {
+      const { error } = await supabase
+        .from("campaign_pages")
+        .update({ is_locked: !folder.is_locked })
+        .eq("id", folder.id);
+      if (error) throw error;
+    },
+    onSuccess: () => invalidate(),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Re-parents a dragged page or chapter. `parentId: null` moves it to the
+  // root of the grimório (dragged out of any chapter).
+  const moveItem = useMutation({
+    mutationFn: async ({ id, parentId }: { id: string; parentId: string | null }) => {
+      const { error } = await supabase
+        .from("campaign_pages")
+        .update({ parent_id: parentId })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => invalidate(),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Walks down from `rootId` through its children looking for `targetId` —
+  // used to stop a chapter from being dragged into one of its own
+  // descendants, which would otherwise create a cycle in the tree.
+  const isDescendant = (rootId: string, targetId: string): boolean => {
+    const children = pages.filter((p) => p.parent_id === rootId);
+    return children.some((c) => c.id === targetId || isDescendant(c.id, targetId));
+  };
+
+  const handleDrop = (targetFolderId: string | null) => {
+    if (!draggedId) return;
+    const dragged = pages.find((p) => p.id === draggedId);
+    if (!dragged) return;
+    if (draggedId === targetFolderId) return; // dropped on itself
+    if (dragged.parent_id === targetFolderId) return; // no-op, already there
+    if (dragged.is_folder && targetFolderId && isDescendant(draggedId, targetFolderId)) {
+      toast.error("Não é possível mover um capítulo para dentro dele mesmo.");
+      return;
+    }
+    moveItem.mutate({ id: draggedId, parentId: targetFolderId });
+    setDraggedId(null);
+    setDragOverId(null);
+  };
 
   const rootFolders = folders.filter((f) => f.parent_id === null);
   const rootPages = leaves.filter((f) => f.parent_id === null);
@@ -249,7 +307,23 @@ export function GrimoireSidebar({ campaignId, pages, selectedId, onSelect, isMas
         </div>
       )}
 
-      <div className="flex-1 p-2">
+      <div
+        className={`flex-1 p-2 ${isMaster && draggedId && dragOverId === "__root" ? "bg-primary/5 ring-1 ring-inset ring-primary/25" : ""}`}
+        onDragOver={(e) => {
+          if (!isMaster || !draggedId) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          setDragOverId("__root");
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDragOverId(null);
+        }}
+        onDrop={(e) => {
+          if (!isMaster) return;
+          e.preventDefault();
+          handleDrop(null);
+        }}
+      >
         {rootFolders.map((f) => (
           <FolderNode
             key={f.id}
@@ -265,6 +339,12 @@ export function GrimoireSidebar({ campaignId, pages, selectedId, onSelect, isMas
             onDeletePage={(id) => deletePage.mutate(id)}
             onRename={(id, title) => renamePage.mutate({ id, title })}
             onTogglePublish={(p) => togglePublish.mutate(p)}
+            onToggleLock={(f2) => toggleLock.mutate(f2)}
+            draggedId={draggedId}
+            setDraggedId={setDraggedId}
+            dragOverId={dragOverId}
+            setDragOverId={setDragOverId}
+            onDropOnFolder={handleDrop}
             depth={0}
           />
         ))}
@@ -278,6 +358,9 @@ export function GrimoireSidebar({ campaignId, pages, selectedId, onSelect, isMas
             onDelete={() => deletePage.mutate(p.id)}
             onRename={(title) => renamePage.mutate({ id: p.id, title })}
             onTogglePublish={() => togglePublish.mutate(p)}
+            draggedId={draggedId}
+            setDraggedId={setDraggedId}
+            onDropOnFolder={handleDrop}
             depth={0}
           />
         ))}
@@ -304,6 +387,12 @@ function FolderNode({
   onDeletePage,
   onRename,
   onTogglePublish,
+  onToggleLock,
+  draggedId,
+  setDraggedId,
+  dragOverId,
+  setDragOverId,
+  onDropOnFolder,
   depth,
 }: {
   folder: CampaignPage;
@@ -318,6 +407,12 @@ function FolderNode({
   onDeletePage: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onTogglePublish: (page: CampaignPage) => void;
+  onToggleLock: (folder: CampaignPage) => void;
+  draggedId: string | null;
+  setDraggedId: React.Dispatch<React.SetStateAction<string | null>>;
+  dragOverId: string | null;
+  setDragOverId: React.Dispatch<React.SetStateAction<string | null>>;
+  onDropOnFolder: (folderId: string | null) => void;
   depth: number;
 }) {
   const isOpen = open[folder.id] ?? true;
@@ -326,21 +421,64 @@ function FolderNode({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(folder.title);
 
+  // Players never receive a locked chapter's descendants from the server
+  // (RLS cuts them off), so there's nothing to expand into — the toggle is
+  // disabled and shows a padlock instead of pretending there's content.
+  const lockedForPlayer = folder.is_locked && !isMaster;
+  const isDropTarget = draggedId && draggedId !== folder.id && dragOverId === folder.id;
+
   return (
     <div>
       <div
-        className="group flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground hover:bg-primary/5 hover:text-primary"
+        draggable={isMaster && !editing}
+        onDragStart={(e) => {
+          if (!isMaster) return;
+          e.stopPropagation();
+          setDraggedId(folder.id);
+        }}
+        onDragEnd={() => {
+          setDraggedId(null);
+          setDragOverId(null);
+        }}
+        onDragOver={(e) => {
+          if (!isMaster || !draggedId || draggedId === folder.id) return;
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "move";
+          setDragOverId(folder.id);
+        }}
+        onDragLeave={(e) => {
+          e.stopPropagation();
+          if (dragOverId === folder.id) setDragOverId(null);
+        }}
+        onDrop={(e) => {
+          if (!isMaster) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onDropOnFolder(folder.id);
+        }}
+        className={`group flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground hover:bg-primary/5 hover:text-primary ${
+          isDropTarget ? "bg-primary/10 ring-1 ring-inset ring-primary/40" : ""
+        } ${draggedId === folder.id ? "opacity-40" : ""}`}
         style={{ paddingLeft: 8 + depth * 12 }}
       >
         <button
-          onClick={() => setOpen((s) => ({ ...s, [folder.id]: !isOpen }))}
+          onClick={() => {
+            if (lockedForPlayer) return;
+            setOpen((s) => ({ ...s, [folder.id]: !isOpen }));
+          }}
           aria-expanded={isOpen}
-          className="flex flex-1 items-center gap-2 text-left"
+          aria-disabled={lockedForPlayer}
+          className={`flex flex-1 items-center gap-2 text-left ${lockedForPlayer ? "cursor-default" : ""}`}
         >
-          <ChevronRight
-            aria-hidden="true"
-            className={`size-3 shrink-0 text-primary/60 transition-transform ${isOpen ? "rotate-90" : ""}`}
-          />
+          {lockedForPlayer ? (
+            <Lock className="size-3 shrink-0 text-primary/50" aria-hidden="true" />
+          ) : (
+            <ChevronRight
+              aria-hidden="true"
+              className={`size-3 shrink-0 text-primary/60 transition-transform ${isOpen ? "rotate-90" : ""}`}
+            />
+          )}
           <span
             aria-hidden="true"
             className="grid size-5 shrink-0 place-items-center font-serif text-lg leading-none text-primary/80"
@@ -380,18 +518,52 @@ function FolderNode({
           )}
         </button>
         {isMaster && !editing && (
-          <button
-            onClick={() => onDeleteFolder(folder.id)}
-            aria-label={`Remover capítulo ${folder.title}`}
-            className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
-            title="Remover"
-          >
-            <Trash2 className="size-3.5" aria-hidden="true" />
-          </button>
+          <>
+            <button
+              onClick={() => onToggleLock(folder)}
+              aria-label={folder.is_locked ? "Destrancar capítulo" : "Trancar capítulo"}
+              title={
+                folder.is_locked
+                  ? "Trancado — jogadores veem o nome, mas não abrem"
+                  : "Trancar para os jogadores"
+              }
+              className={`transition-opacity hover:text-primary ${
+                folder.is_locked ? "opacity-70" : "opacity-0 group-hover:opacity-70"
+              }`}
+            >
+              {folder.is_locked ? (
+                <Lock className="size-3.5" aria-hidden="true" />
+              ) : (
+                <LockOpen className="size-3.5" aria-hidden="true" />
+              )}
+            </button>
+            <button
+              onClick={() => onTogglePublish(folder)}
+              aria-label={folder.is_published ? "Esconder capítulo" : "Mostrar capítulo aos jogadores"}
+              title={folder.is_published ? "Visível para jogadores" : "Só o mestre vê"}
+              className={`transition-opacity hover:text-primary ${
+                folder.is_published ? "opacity-70" : "opacity-0 group-hover:opacity-70"
+              }`}
+            >
+              {folder.is_published ? (
+                <Eye className="size-3.5" aria-hidden="true" />
+              ) : (
+                <EyeOff className="size-3.5" aria-hidden="true" />
+              )}
+            </button>
+            <button
+              onClick={() => onDeleteFolder(folder.id)}
+              aria-label={`Remover capítulo ${folder.title}`}
+              className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+              title="Remover"
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+            </button>
+          </>
         )}
       </div>
 
-      {isOpen && (
+      {isOpen && !lockedForPlayer && (
         <div className="ml-4 mt-0.5 border-l border-primary/10">
           {children.map((c) => (
             <FolderNode
@@ -408,6 +580,12 @@ function FolderNode({
               onDeletePage={onDeletePage}
               onRename={onRename}
               onTogglePublish={onTogglePublish}
+              onToggleLock={onToggleLock}
+              draggedId={draggedId}
+              setDraggedId={setDraggedId}
+              dragOverId={dragOverId}
+              setDragOverId={setDragOverId}
+              onDropOnFolder={onDropOnFolder}
               depth={depth + 1}
             />
           ))}
@@ -421,6 +599,9 @@ function FolderNode({
               onDelete={() => onDeletePage(p.id)}
               onRename={(title) => onRename(p.id, title)}
               onTogglePublish={() => onTogglePublish(p)}
+              draggedId={draggedId}
+              setDraggedId={setDraggedId}
+              onDropOnFolder={onDropOnFolder}
               depth={depth + 1}
             />
           ))}
@@ -438,6 +619,9 @@ function PageNode({
   onDelete,
   onRename,
   onTogglePublish,
+  draggedId,
+  setDraggedId,
+  onDropOnFolder,
   depth,
 }: {
   page: CampaignPage;
@@ -447,6 +631,9 @@ function PageNode({
   onDelete: () => void;
   onRename: (title: string) => void;
   onTogglePublish: () => void;
+  draggedId: string | null;
+  setDraggedId: React.Dispatch<React.SetStateAction<string | null>>;
+  onDropOnFolder: (folderId: string | null) => void;
   depth: number;
 }) {
   const [editing, setEditing] = useState(false);
@@ -454,10 +641,29 @@ function PageNode({
 
   return (
     <div
+      draggable={isMaster && !editing}
+      onDragStart={(e) => {
+        if (!isMaster) return;
+        e.stopPropagation();
+        setDraggedId(page.id);
+      }}
+      onDragEnd={() => setDraggedId(null)}
+      onDragOver={(e) => {
+        if (!isMaster || !draggedId || draggedId === page.id) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(e) => {
+        if (!isMaster || !draggedId || draggedId === page.id) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onDropOnFolder(page.parent_id);
+      }}
       onClick={onSelect}
       className={`group flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-primary/5 hover:text-primary ${
         isSelected ? "bg-primary/10 text-primary" : "text-muted-foreground"
-      }`}
+      } ${draggedId === page.id ? "opacity-40" : ""}`}
       style={{ paddingLeft: 8 + depth * 12 + 12 }}
     >
       <span aria-hidden="true" className="text-primary/60">
