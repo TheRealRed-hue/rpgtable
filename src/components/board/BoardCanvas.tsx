@@ -900,6 +900,29 @@ function ObjectViewImpl({
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [isEditingDoc, setIsEditingDoc] = useState(false);
+  // Pergaminho ("document") drafts used to live only in the uncontrolled
+  // textarea's DOM value, saved solely on blur. Switching screens/routes
+  // (or a browser tab switch on some engines) unmounts this card before a
+  // native blur ever fires, silently discarding everything typed. This ref
+  // tracks the latest draft so it can be flushed on a debounce, on blur,
+  // and — critically — on unmount, so navigating away never loses text.
+  const docDraftRef = useRef<{ value: string; dirty: boolean }>({ value: "", dirty: false });
+  const docSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushDocSave = useCallback(() => {
+    if (docSaveTimerRef.current) {
+      clearTimeout(docSaveTimerRef.current);
+      docSaveTimerRef.current = null;
+    }
+    if (docDraftRef.current.dirty) {
+      onEditDocument?.(obj, docDraftRef.current.value);
+      docDraftRef.current.dirty = false;
+    }
+  }, [obj, onEditDocument]);
+  useEffect(() => {
+    return () => {
+      flushDocSave();
+    };
+  }, [flushDocSave]);
   const linkedCharacter = characters.find((c) => c.id === obj.character_id) ?? null;
   // A player can move their own token and turn its vision cone during a
   // scene without being the master — but only the one pin linked to a
@@ -1448,7 +1471,19 @@ function ObjectViewImpl({
           <span className="text-[9px] uppercase tracking-widest text-ink/50">Pergaminho</span>
           {canEditDoc && (
             <button
-              onClick={() => setIsEditingDoc((v) => !v)}
+              onClick={() => {
+                if (isEditingDoc) {
+                  // Closing via the check button: same escape hatch as
+                  // blur, in case the button click itself doesn't fire a
+                  // native blur on the textarea before the DOM node swaps.
+                  flushDocSave();
+                }
+                setIsEditingDoc((v) => {
+                  const next = !v;
+                  if (next) docDraftRef.current = { value: content, dirty: false };
+                  return next;
+                });
+              }}
               aria-label={isEditingDoc ? "Parar de editar" : "Editar pergaminho"}
               title={isEditingDoc ? "Parar de editar" : "Editar pergaminho"}
               className="text-ink/50 hover:text-ink"
@@ -1466,9 +1501,15 @@ function ObjectViewImpl({
         <textarea
           autoFocus
           defaultValue={content}
+          onChange={(e) => {
+            docDraftRef.current = { value: e.target.value, dirty: e.target.value !== content };
+            if (docSaveTimerRef.current) clearTimeout(docSaveTimerRef.current);
+            docSaveTimerRef.current = setTimeout(flushDocSave, 800);
+          }}
           onBlur={(e) => {
             setIsEditingDoc(false);
-            if (e.target.value !== content) onEditDocument?.(obj, e.target.value);
+            docDraftRef.current = { value: e.target.value, dirty: e.target.value !== content };
+            flushDocSave();
           }}
           onKeyDown={(e) => {
             if (e.key === "Escape") e.currentTarget.blur();
