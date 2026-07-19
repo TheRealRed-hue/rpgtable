@@ -306,6 +306,66 @@ export type Database = {
           },
         ];
       };
+      campaign_pages: {
+        Row: {
+          blocks: Json;
+          campaign_id: string;
+          created_at: string;
+          created_by: string;
+          icon: string;
+          id: string;
+          is_folder: boolean;
+          is_published: boolean;
+          parent_id: string | null;
+          sort_order: number;
+          title: string;
+          updated_at: string;
+        };
+        Insert: {
+          blocks?: Json;
+          campaign_id: string;
+          created_at?: string;
+          created_by: string;
+          icon?: string;
+          id?: string;
+          is_folder?: boolean;
+          is_published?: boolean;
+          parent_id?: string | null;
+          sort_order?: number;
+          title: string;
+          updated_at?: string;
+        };
+        Update: {
+          blocks?: Json;
+          campaign_id?: string;
+          created_at?: string;
+          created_by?: string;
+          icon?: string;
+          id?: string;
+          is_folder?: boolean;
+          is_published?: boolean;
+          parent_id?: string | null;
+          sort_order?: number;
+          title?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "campaign_pages_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_pages_parent_id_fkey";
+            columns: ["parent_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_pages";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       files: {
         Row: {
           campaign_id: string;

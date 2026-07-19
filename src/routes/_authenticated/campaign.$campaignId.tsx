@@ -20,6 +20,7 @@ import {
   Copy,
   PanelRightOpen,
   PanelRightClose,
+  BookOpenText,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -34,7 +35,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-async function ensureCampaignMembership(campaignId: string) {
+export async function ensureCampaignMembership(campaignId: string) {
   // Skip the round-trip entirely if we already confirmed membership this
   // session — the loader reruns on every navigation AND every hover-preload,
   // so without this an existing member's browser was hammering both the
@@ -707,6 +708,16 @@ function CampaignPage() {
               </DialogContent>
             </Dialog>
           )}
+
+          <Link
+            to="/campaign/$campaignId/grimorio"
+            params={{ campaignId }}
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+            title="Grimório — páginas da campanha"
+          >
+            <BookOpenText className="size-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">Grimório</span>
+          </Link>
 
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Users className="size-3.5" aria-hidden="true" />

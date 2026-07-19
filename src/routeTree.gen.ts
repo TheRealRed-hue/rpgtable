@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedTablesRouteImport } from './routes/_authenticated/tables'
 import { Route as AuthenticatedCharactersRouteImport } from './routes/_authenticated/characters'
 import { Route as AuthenticatedCampaignCampaignIdRouteImport } from './routes/_authenticated/campaign.$campaignId'
+import { Route as AuthenticatedCampaignCampaignIdGrimorioRouteImport } from './routes/_authenticated/campaign.$campaignId_.grimorio'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -46,6 +47,12 @@ const AuthenticatedCampaignCampaignIdRoute =
     path: '/campaign/$campaignId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedCampaignCampaignIdGrimorioRoute =
+  AuthenticatedCampaignCampaignIdGrimorioRouteImport.update({
+    id: '/campaign/$campaignId_/grimorio',
+    path: '/campaign/$campaignId/grimorio',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -53,6 +60,7 @@ export interface FileRoutesByFullPath {
   '/characters': typeof AuthenticatedCharactersRoute
   '/tables': typeof AuthenticatedTablesRoute
   '/campaign/$campaignId': typeof AuthenticatedCampaignCampaignIdRoute
+  '/campaign/$campaignId/grimorio': typeof AuthenticatedCampaignCampaignIdGrimorioRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -60,6 +68,7 @@ export interface FileRoutesByTo {
   '/characters': typeof AuthenticatedCharactersRoute
   '/tables': typeof AuthenticatedTablesRoute
   '/campaign/$campaignId': typeof AuthenticatedCampaignCampaignIdRoute
+  '/campaign/$campaignId/grimorio': typeof AuthenticatedCampaignCampaignIdGrimorioRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -69,12 +78,25 @@ export interface FileRoutesById {
   '/_authenticated/characters': typeof AuthenticatedCharactersRoute
   '/_authenticated/tables': typeof AuthenticatedTablesRoute
   '/_authenticated/campaign/$campaignId': typeof AuthenticatedCampaignCampaignIdRoute
+  '/_authenticated/campaign/$campaignId_/grimorio': typeof AuthenticatedCampaignCampaignIdGrimorioRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/characters' | '/tables' | '/campaign/$campaignId'
+  fullPaths:
+    | '/'
+    | '/auth'
+    | '/characters'
+    | '/tables'
+    | '/campaign/$campaignId'
+    | '/campaign/$campaignId/grimorio'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/characters' | '/tables' | '/campaign/$campaignId'
+  to:
+    | '/'
+    | '/auth'
+    | '/characters'
+    | '/tables'
+    | '/campaign/$campaignId'
+    | '/campaign/$campaignId/grimorio'
   id:
     | '__root__'
     | '/'
@@ -83,6 +105,7 @@ export interface FileRouteTypes {
     | '/_authenticated/characters'
     | '/_authenticated/tables'
     | '/_authenticated/campaign/$campaignId'
+    | '/_authenticated/campaign/$campaignId_/grimorio'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -135,6 +158,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCampaignCampaignIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/campaign/$campaignId_/grimorio': {
+      id: '/_authenticated/campaign/$campaignId_/grimorio'
+      path: '/campaign/$campaignId/grimorio'
+      fullPath: '/campaign/$campaignId/grimorio'
+      preLoaderRoute: typeof AuthenticatedCampaignCampaignIdGrimorioRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
@@ -142,12 +172,15 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedCharactersRoute: typeof AuthenticatedCharactersRoute
   AuthenticatedTablesRoute: typeof AuthenticatedTablesRoute
   AuthenticatedCampaignCampaignIdRoute: typeof AuthenticatedCampaignCampaignIdRoute
+  AuthenticatedCampaignCampaignIdGrimorioRoute: typeof AuthenticatedCampaignCampaignIdGrimorioRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCharactersRoute: AuthenticatedCharactersRoute,
   AuthenticatedTablesRoute: AuthenticatedTablesRoute,
   AuthenticatedCampaignCampaignIdRoute: AuthenticatedCampaignCampaignIdRoute,
+  AuthenticatedCampaignCampaignIdGrimorioRoute:
+    AuthenticatedCampaignCampaignIdGrimorioRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =
