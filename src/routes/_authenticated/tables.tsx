@@ -50,8 +50,10 @@ function TablesPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
+    setIsMounted(true);
     getLocalUser().then((user) => setUserId(user?.id ?? null));
   }, []);
 
@@ -66,6 +68,8 @@ function TablesPage() {
       return data;
     },
   });
+
+  const showLoading = !isMounted || isLoading;
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -231,7 +235,7 @@ function TablesPage() {
           </Dialog>
         </div>
 
-        {isLoading ? (
+        {showLoading ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[0, 1, 2].map((i) => (
               <div key={i} className="h-40 animate-pulse rounded-lg bg-card/40" />

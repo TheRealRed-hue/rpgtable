@@ -66,6 +66,12 @@ interface Props {
   onReorder?: (obj: BoardObject, dir: "front" | "back") => void;
   onToggleVisibility?: (obj: BoardObject) => void;
   onRemoveObject?: (obj: BoardObject) => void;
+  /** Clicking a row in the "Camadas" list selects that object on the
+   * canvas (BoardCanvas pans to it and shows its move/lock/etc controls). */
+  onSelectObject?: (obj: BoardObject) => void;
+  /** Currently selected object id, so its row can be highlighted here too
+   * when it was selected from the canvas instead of from this list. */
+  selectedObjectId?: string | null;
 }
 
 const KIND_GLYPH: Record<string, string> = {
@@ -127,6 +133,8 @@ export function ArchiveSidebar({
   onReorder,
   onToggleVisibility,
   onRemoveObject,
+  onSelectObject,
+  selectedObjectId,
 }: Props) {
   const qc = useQueryClient();
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
@@ -381,10 +389,27 @@ export function ArchiveSidebar({
             {objects
               .slice()
               .sort((a, b) => b.z_index - a.z_index)
-              .map((obj) => (
+              .map((obj) => {
+                const isSelected = selectedObjectId === obj.id;
+                return (
                 <div
                   key={obj.id}
-                  className="group flex items-center gap-2 rounded px-2 py-1.5 text-xs text-muted-foreground ring-1 ring-transparent hover:bg-primary/5 hover:text-primary hover:ring-primary/10"
+                  onClick={() => onSelectObject?.(obj)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelectObject?.(obj);
+                    }
+                  }}
+                  aria-pressed={isSelected}
+                  title="Selecionar na mesa"
+                  className={`group flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs ring-1 transition-colors ${
+                    isSelected
+                      ? "bg-primary/10 text-primary ring-primary/30"
+                      : "text-muted-foreground ring-transparent hover:bg-primary/5 hover:text-primary hover:ring-primary/10"
+                  }`}
                 >
                   <span aria-hidden="true" className="shrink-0 text-primary/60">
                     {KIND_GLYPH[obj.kind] ?? "◆"}
@@ -395,9 +420,16 @@ export function ArchiveSidebar({
                       {kindLabel(obj.kind)}
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                  <div
+                    className={`flex shrink-0 items-center gap-0.5 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
+                      isSelected ? "opacity-100" : "opacity-0"
+                    }`}
+                  >
                     <button
-                      onClick={() => onToggleVisibility?.(obj)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleVisibility?.(obj);
+                      }}
                       aria-label={
                         obj.visible_to_players ? "Ocultar dos jogadores" : "Mostrar aos jogadores"
                       }
@@ -413,7 +445,10 @@ export function ArchiveSidebar({
                       )}
                     </button>
                     <button
-                      onClick={() => onReorder?.(obj, "back")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onReorder?.(obj, "back");
+                      }}
                       aria-label="Mandar para trás"
                       title="Mandar para trás"
                       className="grid size-6 place-items-center rounded hover:bg-primary/10 hover:text-primary"
@@ -421,7 +456,10 @@ export function ArchiveSidebar({
                       <ChevronsDown className="size-3.5" aria-hidden="true" />
                     </button>
                     <button
-                      onClick={() => onReorder?.(obj, "front")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onReorder?.(obj, "front");
+                      }}
                       aria-label="Trazer para frente"
                       title="Trazer para frente"
                       className="grid size-6 place-items-center rounded hover:bg-primary/10 hover:text-primary"
@@ -429,7 +467,10 @@ export function ArchiveSidebar({
                       <ChevronsUp className="size-3.5" aria-hidden="true" />
                     </button>
                     <button
-                      onClick={() => onRemoveObject?.(obj)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemoveObject?.(obj);
+                      }}
                       aria-label={`Remover ${obj.label || "objeto"} da mesa`}
                       title="Remover da mesa"
                       className="grid size-6 place-items-center rounded hover:bg-destructive/20 hover:text-destructive"
@@ -438,7 +479,8 @@ export function ArchiveSidebar({
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             {objects.length === 0 && (
               <div className="py-8 text-center text-xs text-muted-foreground italic">
                 Nada na mesa ainda.

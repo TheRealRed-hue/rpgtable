@@ -89,7 +89,7 @@ function GrimorioPage() {
 
   useEffect(() => {
     const channel = supabase
-      .channel(`campaign_pages:${campaignId}`)
+      .channel(`campaign_pages:${campaignId}:${Math.random().toString(36).slice(2)}`)
       .on(
         "postgres_changes",
         {

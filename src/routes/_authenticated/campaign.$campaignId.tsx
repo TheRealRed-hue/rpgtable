@@ -102,6 +102,15 @@ function CampaignPage() {
   const [pinLabel, setPinLabel] = useState("");
   const [sidebarOpenMobile, setSidebarOpenMobile] = useState(false);
   const [openCharacterId, setOpenCharacterId] = useState<string | null>(null);
+  // Which board object is selected — shared between BoardCanvas (clicking an
+  // object on the table) and the "Camadas" panel (clicking a row), so
+  // either one selecting an object highlights it in both places.
+  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  // Bumped every time the layers panel is used to select an object, so
+  // BoardCanvas knows to pan/center on it even if the same object was
+  // already selected (a plain id wouldn't change and so wouldn't re-trigger
+  // the effect on a second click).
+  const [focusRequest, setFocusRequest] = useState<{ id: string; nonce: number } | null>(null);
 
   useEffect(() => {
     getLocalUser().then((user) => setUserId(user?.id ?? null));
@@ -239,58 +248,123 @@ function CampaignPage() {
       if (error) throw error;
       return data as BoardObject[];
     },
+    // Safety net on top of Realtime below: a player moving their own token
+    // writes through the move_own_token RPC, and if that browser's Realtime
+    // socket has silently dropped (tab backgrounded, flaky wifi, a proxy
+    // timing out an idle websocket — all common over a multi-hour session)
+    // the master's board previously only caught up on a hard refresh, since
+    // a dead socket never fires another postgres_changes event to resync
+    // from. Polling every few seconds means it self-heals on its own even
+    // if Realtime never recovers.
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   });
 
   // Realtime — board_objects, folders, files
   useEffect(() => {
-    const channel = supabase
-      .channel(`campaign:${campaignId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "board_objects",
-          filter: `campaign_id=eq.${campaignId}`,
-        },
-        () => qc.invalidateQueries({ queryKey: ["board_objects", campaignId] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "folders", filter: `campaign_id=eq.${campaignId}` },
-        () => qc.invalidateQueries({ queryKey: ["folders", campaignId] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "files", filter: `campaign_id=eq.${campaignId}` },
-        () => qc.invalidateQueries({ queryKey: ["files", campaignId] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "characters" },
-        // Characters are a per-user library now, not campaign-scoped, so we
-        // can't filter this subscription by campaign_id server-side — just
-        // invalidate every "characters"-prefixed query on any change.
-        () => qc.invalidateQueries({ queryKey: ["characters"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "campaigns", filter: `id=eq.${campaignId}` },
-        () => qc.invalidateQueries({ queryKey: ["campaign", campaignId] }),
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "campaign_theme_overrides",
-          filter: `campaign_id=eq.${campaignId}`,
-        },
-        () => qc.invalidateQueries({ queryKey: ["theme_override", campaignId] }),
-      )
-      .subscribe();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let reconnectTimer: ReturnType<typeof window.setTimeout> | undefined;
+    let isActive = true;
+
+    const invalidateAll = () => {
+      qc.invalidateQueries({ queryKey: ["board_objects", campaignId] });
+      qc.invalidateQueries({ queryKey: ["folders", campaignId] });
+      qc.invalidateQueries({ queryKey: ["files", campaignId] });
+      qc.invalidateQueries({ queryKey: ["characters"] });
+      qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
+      qc.invalidateQueries({ queryKey: ["theme_override", campaignId] });
+    };
+
+    const connect = () => {
+      if (!isActive) return;
+      if (channel) {
+        supabase.removeChannel(channel);
+        channel = null;
+      }
+
+      const channelName = `campaign:${campaignId}:${Math.random().toString(36).slice(2)}`;
+      channel = supabase
+        .channel(channelName)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "board_objects",
+            filter: `campaign_id=eq.${campaignId}`,
+          },
+          () => qc.invalidateQueries({ queryKey: ["board_objects", campaignId] }),
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "folders", filter: `campaign_id=eq.${campaignId}` },
+          () => qc.invalidateQueries({ queryKey: ["folders", campaignId] }),
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "files", filter: `campaign_id=eq.${campaignId}` },
+          () => qc.invalidateQueries({ queryKey: ["files", campaignId] }),
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "characters" },
+          // Characters are a per-user library now, not campaign-scoped, so we
+          // can't filter this subscription by campaign_id server-side — just
+          // invalidate every "characters"-prefixed query on any change.
+          () => qc.invalidateQueries({ queryKey: ["characters"] }),
+        )
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "campaigns", filter: `id=eq.${campaignId}` },
+          () => qc.invalidateQueries({ queryKey: ["campaign", campaignId] }),
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "campaign_theme_overrides",
+            filter: `campaign_id=eq.${campaignId}`,
+          },
+          () => qc.invalidateQueries({ queryKey: ["theme_override", campaignId] }),
+        )
+        .subscribe((status) => {
+          if (!isActive) return;
+          if (status === "SUBSCRIBED") {
+            // Pull anything that happened while we were (re)connecting —
+            // a dropped socket never replays the events it missed.
+            invalidateAll();
+          } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            if (channel) {
+              supabase.removeChannel(channel);
+              channel = null;
+            }
+            if (reconnectTimer) {
+              window.clearTimeout(reconnectTimer);
+            }
+            reconnectTimer = window.setTimeout(() => {
+              if (isActive) connect();
+            }, 1500);
+          }
+        });
+    };
+    connect();
+
+    // Belt-and-suspenders: some dropped sockets never fire CHANNEL_ERROR at
+    // all (a backgrounded mobile tab just stops ticking), so also resync
+    // whenever the tab/window becomes active again.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") invalidateAll();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", invalidateAll);
+
     return () => {
-      supabase.removeChannel(channel);
+      isActive = false;
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", invalidateAll);
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [campaignId, qc]);
 
@@ -335,6 +409,15 @@ function CampaignPage() {
       toast.error("Não foi possível travar/destravar: " + error.message);
       patchBoardObject(obj.id, { locked: obj.locked });
     }
+  };
+
+  // Camadas panel → canvas: select the row's object and have BoardCanvas
+  // pan/center on it so clicking a layer actually shows you (and lets you
+  // touch) that object, instead of just reordering it blind.
+  const handleSelectObjectFromLayers = (obj: BoardObject) => {
+    setSelectedObjectId(obj.id);
+    setFocusRequest({ id: obj.id, nonce: Date.now() });
+    if (isMobile) setSidebarOpenMobile(false);
   };
 
   const handleToggleObjectVisibility = async (obj: BoardObject) => {
@@ -401,6 +484,22 @@ function CampaignPage() {
         light_angle: obj.light_angle,
         light_cone_width: obj.light_cone_width,
       });
+    }
+  };
+
+  // Generic free-form patch used by the pin properties panel (currently
+  // just the name field, but written to take any patch so future fields
+  // added to that panel don't each need their own handler here).
+  const handleUpdateObject = async (obj: BoardObject, patch: Partial<BoardObject>) => {
+    patchBoardObject(obj.id, patch);
+    const { error } = await supabase.from("board_objects").update(patch).eq("id", obj.id);
+    if (error) {
+      toast.error("Não foi possível salvar: " + error.message);
+      const revert: Partial<BoardObject> = {};
+      for (const key of Object.keys(patch) as (keyof BoardObject)[]) {
+        (revert as Record<string, unknown>)[key] = obj[key];
+      }
+      patchBoardObject(obj.id, revert);
     }
   };
 
@@ -484,6 +583,22 @@ function CampaignPage() {
       );
     }
     return { data: newObj, error: null };
+  };
+
+  // Copies every property of an object into a brand-new one (new id, offset
+  // position, on top of the original) — used by the pin properties panel's
+  // "Duplicar" button.
+  const handleDuplicateObject = async (obj: BoardObject) => {
+    if (!userId) return;
+    const { id: _id, created_at: _created_at, updated_at: _updated_at, ...rest } = obj;
+    const { error } = await insertBoardObject({
+      ...rest,
+      x: obj.x + 30,
+      y: obj.y + 30,
+      z_index: nextZIndex(objects),
+      created_by: userId,
+    });
+    if (error) toast.error("Não foi possível duplicar: " + error.message);
   };
 
   const handleDropFromSidebar = async (fileId: string, worldX: number, worldY: number) => {
@@ -803,6 +918,11 @@ function CampaignPage() {
             onRotateOwnLight={handleRotateOwnLight}
             dynamicLighting={campaign?.dynamic_lighting ?? true}
             onToggleDynamicLighting={isMaster ? () => toggleDynamicLighting.mutate() : undefined}
+            selectedId={selectedObjectId}
+            onSelectedIdChange={setSelectedObjectId}
+            focusRequest={focusRequest}
+            onUpdateObject={handleUpdateObject}
+            onDuplicateObject={handleDuplicateObject}
           />
           <ThemePicker
             campaignId={campaignId}
@@ -844,6 +964,8 @@ function CampaignPage() {
             onReorder={handleReorderObject}
             onToggleVisibility={handleToggleObjectVisibility}
             onRemoveObject={handleRemoveObject}
+            onSelectObject={handleSelectObjectFromLayers}
+            selectedObjectId={selectedObjectId}
           />
         </div>
       </div>

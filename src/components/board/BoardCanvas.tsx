@@ -20,6 +20,7 @@ import {
   UserRound,
   Sun,
   Moon,
+  Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -82,6 +83,19 @@ interface Props {
   dynamicLighting?: boolean;
   /** Master-only toggle for dynamicLighting — omitted entirely for players. */
   onToggleDynamicLighting?: () => void;
+  /** Currently selected object id — controlled so the "Camadas" panel and
+   * the canvas can share/reflect the same selection either way. */
+  selectedId?: string | null;
+  onSelectedIdChange?: (id: string | null) => void;
+  /** Bumped (new id+nonce) whenever the "Camadas" panel selects an object —
+   * BoardCanvas reacts by selecting it here too and panning it into view. */
+  focusRequest?: { id: string; nonce: number } | null;
+  /** Free-form property edit (label, etc.) from the double-click properties
+   * panel — patches whatever fields are given. */
+  onUpdateObject?: (obj: BoardObject, patch: Partial<BoardObject>) => void;
+  /** Creates a copy of the object (same properties, slightly offset) from
+   * the double-click properties panel's "Duplicar" button. */
+  onDuplicateObject?: (obj: BoardObject) => void;
 }
 
 interface Viewport {
@@ -129,6 +143,11 @@ export function BoardCanvas({
   onRotateOwnLight,
   dynamicLighting = true,
   onToggleDynamicLighting,
+  selectedId: selectedIdProp,
+  onSelectedIdChange,
+  focusRequest,
+  onUpdateObject,
+  onDuplicateObject,
 }: Props) {
   const theme = getBoardTheme(themeId);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -139,7 +158,42 @@ export function BoardCanvas({
   // Reorder/lock/visibility controls used to only reveal on :hover, which
   // has no touch equivalent — tapping an object now selects it and keeps
   // those controls visible until something else is tapped.
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Controlled by the parent when selectedIdProp/onSelectedIdChange are
+  // given (so the "Camadas" panel can share selection with the canvas),
+  // otherwise falls back to purely-internal state.
+  const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
+  const selectedId = selectedIdProp !== undefined ? selectedIdProp : internalSelectedId;
+  const setSelectedId = onSelectedIdChange ?? setInternalSelectedId;
+  // Bottom-toolbar "lock tool" (master only): while armed, clicking an
+  // object toggles its lock instead of selecting it, so several objects can
+  // be locked/unlocked in a row without opening each one's own toolbar.
+  const [lockToolActive, setLockToolActive] = useState(false);
+  useEffect(() => {
+    if (!lockToolActive) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLockToolActive(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [lockToolActive]);
+  // Double-clicking a pin opens a side panel with its full properties
+  // (label, size, character link, light, lock, visibility) instead of the
+  // small floating toolbar — and the resize handle only shows up once this
+  // is open, so a stray drag near a selected pin doesn't accidentally
+  // resize it.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  useEffect(() => {
+    if (editingId && !objects.some((o) => o.id === editingId)) setEditingId(null);
+  }, [editingId, objects]);
+  useEffect(() => {
+    if (!editingId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setEditingId(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [editingId]);
+  const editingObj = editingId ? (objects.find((o) => o.id === editingId) ?? null) : null;
   const panStart = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   // Tracks every pointer currently down on the canvas background (by
   // pointerId), so we can tell a one-finger pan from a two-finger pinch —
@@ -394,6 +448,18 @@ export function BoardCanvas({
   }, [dragObj, viewport.scale, onObjectMove, showGrid, isMaster]);
 
   // Object resize (drag the corner handle)
+  const commitObjectResize = async (obj: BoardObject, width: number, height: number) => {
+    onObjectResize?.(obj.id, width, height);
+    const { error } = await supabase
+      .from("board_objects")
+      .update({ width, height })
+      .eq("id", obj.id);
+    if (error) {
+      toast.error("Não foi possível salvar o tamanho: " + error.message);
+      onObjectResize?.(obj.id, obj.width, obj.kind === "pin" ? obj.width : obj.height);
+    }
+  };
+
   const startObjResize = useCallback(
     (obj: BoardObject, e: React.PointerEvent) => {
       if (!isMaster || obj.locked) return;
@@ -531,6 +597,37 @@ export function BoardCanvas({
 
   const resetView = () => setViewport({ x: 0, y: 0, scale: 1 });
 
+  // Kept up to date without being a dependency of the effect below, so a
+  // fresh focusRequest always reads the latest objects without re-running
+  // every time some other viewer's drag updates the objects array.
+  const objectsRef = useRef(objects);
+  useEffect(() => {
+    objectsRef.current = objects;
+  }, [objects]);
+
+  // "Camadas" panel → canvas: select the requested object and pan it into
+  // view. Keyed on focusRequest (id + nonce) rather than just the id, so
+  // clicking the same row twice in a row still re-centers it.
+  useEffect(() => {
+    if (!focusRequest) return;
+    const obj = objectsRef.current.find((o) => o.id === focusRequest.id);
+    if (!obj) return;
+    setSelectedId(obj.id);
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const w = obj.width || 80;
+    const h = obj.kind === "pin" ? w : obj.height || 80;
+    const cx = obj.x + w / 2;
+    const cy = obj.y + h / 2;
+    setViewport((v) => ({
+      x: rect.width / 2 - cx * v.scale,
+      y: rect.height / 2 - cy * v.scale,
+      scale: v.scale,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest]);
+
   // Bring-to-front / send-to-back is now handled by the campaign page's
   // onReorder (it needs to patch the query cache immediately, not just
   // write to Supabase and wait for Realtime — see the Props comment above).
@@ -663,7 +760,10 @@ export function BoardCanvas({
       ref={containerRef}
       onPointerDown={onPointerDown}
       onClick={(e) => {
-        if (e.target === e.currentTarget) setSelectedId(null);
+        if (e.target === e.currentTarget) {
+          setSelectedId(null);
+          setEditingId(null);
+        }
       }}
       onDrop={onDrop}
       onDragOver={(e) => e.preventDefault()}
@@ -737,10 +837,19 @@ export function BoardCanvas({
               characters={characters}
               onOpenCharacter={onOpenCharacter}
               isSelected={selectedId === o.id}
-              onSelect={() => setSelectedId(o.id)}
+              lockToolActive={lockToolActive}
+              onSelect={() => {
+                if (lockToolActive && isMaster) {
+                  onToggleLock?.(o);
+                  return;
+                }
+                setSelectedId(o.id);
+              }}
               onResizeStart={startObjResize}
               onRotateStart={startObjRotate}
               isResizing={resizeObj?.id === o.id}
+              isEditing={editingId === o.id}
+              onOpenProperties={() => setEditingId(o.id)}
               hiddenByFog={!isMaster && dynamicLighting && o.hidden_when_dark && !isLit(o)}
             />
           ))}
@@ -762,6 +871,26 @@ export function BoardCanvas({
         className="pointer-events-none absolute inset-0"
         style={{ backgroundImage: theme.vignette }}
       />
+
+      {isMaster && editingObj && editingObj.kind === "pin" && (
+        <PinPropertiesPanel
+          obj={editingObj}
+          characters={characters}
+          onClose={() => setEditingId(null)}
+          onUpdateObject={onUpdateObject}
+          onResizeCommit={commitObjectResize}
+          onSetLight={onSetLight}
+          onToggleLock={onToggleLock}
+          onToggleVisibility={onToggleVisibility}
+          onLinkCharacter={onLinkCharacter}
+          onReorder={onReorder}
+          onRemoveObject={(o) => {
+            onRemoveObject?.(o);
+            setEditingId(null);
+          }}
+          onDuplicateObject={onDuplicateObject}
+        />
+      )}
 
       {/* Zoom controls */}
       <div
@@ -807,6 +936,31 @@ export function BoardCanvas({
                 )}
               </Button>
             )}
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={
+                lockToolActive
+                  ? "Ferramenta de cadeado ativa — clique em um objeto para travar/destravar, clique aqui para sair"
+                  : "Ativar ferramenta de cadeado — clique em objetos para travá-los/destravá-los"
+              }
+              aria-pressed={lockToolActive}
+              title={
+                lockToolActive
+                  ? "Ferramenta de cadeado ativa — clique em um objeto para travar/destravar"
+                  : "Ferramenta de cadeado — clique e depois clique nos objetos para travá-los/destravá-los, sem abrir a barrinha de cada um"
+              }
+              className={`h-8 w-8 p-0 hover:bg-primary/10 ${
+                lockToolActive ? "text-primary bg-primary/15" : "text-primary/70"
+              }`}
+              onClick={() => setLockToolActive((v) => !v)}
+            >
+              {lockToolActive ? (
+                <Lock className="size-4" aria-hidden="true" />
+              ) : (
+                <Unlock className="size-4" aria-hidden="true" />
+              )}
+            </Button>
             <div className="h-4 w-px bg-primary/15" aria-hidden="true" />
           </>
         )}
@@ -864,6 +1018,9 @@ function ObjectViewImpl({
   onEditDocument,
   onSetLight,
   onLinkCharacter,
+  lockToolActive = false,
+  isEditing = false,
+  onOpenProperties,
 }: {
   obj: BoardObject;
   isMaster: boolean;
@@ -897,6 +1054,15 @@ function ObjectViewImpl({
     >>,
   ) => void;
   onLinkCharacter?: (obj: BoardObject, characterId: string | null) => void;
+  /** Bottom-toolbar lock tool armed by the master — keeps a locked object
+   * clickable (instead of pass-through, see lockedPassThrough below) so it
+   * can still be tapped to toggle its lock. */
+  lockToolActive?: boolean;
+  /** True while this pin's properties side panel is open (double-clicked).
+   * The resize handle only shows up while this is true. */
+  isEditing?: boolean;
+  /** Double-clicking a pin opens its properties panel (master only). */
+  onOpenProperties?: () => void;
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [isEditingDoc, setIsEditingDoc] = useState(false);
@@ -1004,12 +1170,29 @@ function ObjectViewImpl({
     }
   };
 
+  // A locked pin/image/map used to keep swallowing pointer events for
+  // everyone, which is exactly what made panning the canvas (or dropping a
+  // new image) feel stuck whenever the drag/tap started on top of one —
+  // including for the master themselves, not just players. Locked now means
+  // "hands off the canvas" for everyone: it becomes click/drag-through so a
+  // pan gesture (mouse or finger) passes straight through it. The one
+  // exception is while the lock tool is armed, which needs the object to
+  // stay clickable so it can be tapped to unlock it again; otherwise, use
+  // the Camadas panel to select and unlock it.
+  const lockedPassThrough =
+    obj.locked &&
+    !(isMaster && lockToolActive) &&
+    (obj.kind === "pin" || obj.kind === "image" || obj.kind === "map");
+
   const commonHandleProps = {
     onPointerDown: (e: React.PointerEvent) => onDragStart(obj, e),
     onClick: () => onSelect?.(),
     // Without this, mobile browsers intercept the finger-down as a page
     // scroll/zoom gesture before our pointer handler gets a clean drag.
-    style: { touchAction: "none" as const },
+    style: {
+      touchAction: "none" as const,
+      pointerEvents: lockedPassThrough ? ("none" as const) : undefined,
+    },
   };
 
   const controls = (isMaster || canControl) && (
@@ -1222,15 +1405,20 @@ function ObjectViewImpl({
     </div>
   );
 
+  // Pins now only reveal their resize handle once double-clicked (isEditing)
+  // — a plain single-click select used to show it immediately, which made
+  // an accidental drag near a selected token resize it instead of moving
+  // it. Maps/images keep the old select-to-resize behavior unchanged.
+  const showResizeHandle = obj.kind === "pin" ? isEditing || isResizing : isSelected || isResizing;
   const resizeHandle = isMaster && !obj.locked && (
     <div
       onPointerDown={(e) => onResizeStart?.(obj, e)}
       role="presentation"
       aria-label="Redimensionar objeto"
       title="Arraste para redimensionar"
-      className={`pointer-events-auto absolute right-1 bottom-1 z-10 size-3.5 cursor-nwse-resize rounded-full bg-primary ring-2 ring-ink-2 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
-        isSelected || isResizing ? "opacity-100" : "opacity-0"
-      }`}
+      className={`pointer-events-auto absolute right-1 bottom-1 z-10 size-3.5 cursor-nwse-resize rounded-full bg-primary ring-2 ring-ink-2 transition-opacity ${
+        obj.kind !== "pin" ? "group-hover:opacity-100 group-focus-within:opacity-100" : ""
+      } ${showResizeHandle ? "opacity-100" : "opacity-0"}`}
       style={{ touchAction: "none" }}
     />
   );
@@ -1283,6 +1471,12 @@ function ObjectViewImpl({
     opacity: !obj.visible_to_players && isMaster ? 0.55 : 1,
     boxShadow: isDragging ? "0 12px 28px -8px oklch(0 0 0 / 0.55)" : undefined,
     transition: isDragging || isResizing ? "none" : "box-shadow 120ms ease",
+    // Pointer-events:none on the whole wrapper (not just the inner drag
+    // handle) so a locked pin/image/map is truly click-through for anyone
+    // who can't touch it anyway — a pointer-events:none only on the inner
+    // handle would still leave this outer div as the hit-test target,
+    // which still blocks canvas panning from starting on top of it.
+    pointerEvents: lockedPassThrough ? "none" : undefined,
   };
 
   // Render by kind
@@ -1298,6 +1492,9 @@ function ObjectViewImpl({
         <div className="relative" style={{ width: size, height: size }}>
           <div
             {...commonHandleProps}
+            onDoubleClick={() => {
+              if (isMaster) onOpenProperties?.();
+            }}
             className={`candle-glow grid h-full w-full cursor-grab place-items-center overflow-hidden rounded-full bg-wax ring-2 ring-primary/40 ${
               obj.locked ? "cursor-not-allowed" : ""
             }`}
@@ -1555,8 +1752,304 @@ function objectViewPropsEqual(
     prev.isSelected === next.isSelected &&
     prev.showGrid === next.showGrid &&
     prev.hiddenByFog === next.hiddenByFog &&
-    prev.characters === next.characters
+    prev.characters === next.characters &&
+    prev.lockToolActive === next.lockToolActive &&
+    prev.isEditing === next.isEditing
   );
 }
 
 const ObjectView = memo(ObjectViewImpl, objectViewPropsEqual);
+
+// A pin's full property editor — opened by double-clicking it (master
+// only). The old floating toolbar only had room for a handful of icon
+// buttons; this gives every pin property its own labeled control in one
+// place, including things that had no UI at all before (renaming it,
+// setting its size with a slider instead of only drag-resizing).
+function PinPropertiesPanel({
+  obj,
+  characters,
+  onClose,
+  onUpdateObject,
+  onResizeCommit,
+  onSetLight,
+  onToggleLock,
+  onToggleVisibility,
+  onLinkCharacter,
+  onReorder,
+  onRemoveObject,
+  onDuplicateObject,
+}: {
+  obj: BoardObject;
+  characters: Character[];
+  onClose: () => void;
+  onUpdateObject?: (obj: BoardObject, patch: Partial<BoardObject>) => void;
+  onResizeCommit: (obj: BoardObject, width: number, height: number) => void;
+  onSetLight?: (
+    obj: BoardObject,
+    patch: Partial<Pick<
+      BoardObject,
+      "has_light" | "light_radius" | "hidden_when_dark" | "light_shape" | "light_angle" | "light_cone_width"
+    >>,
+  ) => void;
+  onToggleLock?: (obj: BoardObject) => void;
+  onToggleVisibility?: (obj: BoardObject) => void;
+  onLinkCharacter?: (obj: BoardObject, characterId: string | null) => void;
+  onReorder?: (obj: BoardObject, dir: "front" | "back") => void;
+  onRemoveObject?: (obj: BoardObject) => void;
+  onDuplicateObject?: (obj: BoardObject) => void;
+}) {
+  const [label, setLabel] = useState(obj.label ?? "");
+  // Keep the input in sync if a different pin's properties get opened, or
+  // if the label changes from elsewhere (another master browser editing it
+  // at the same time) — but only while this input isn't itself focused, so
+  // an incoming update doesn't yank the caret out from under someone typing.
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (document.activeElement !== inputRef.current) setLabel(obj.label ?? "");
+  }, [obj.id, obj.label]);
+
+  const commitLabel = () => {
+    const next = label.trim();
+    if (next !== (obj.label ?? "")) onUpdateObject?.(obj, { label: next || null });
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-label={`Propriedades de ${obj.label ?? "pin"}`}
+      className="gold-frame pointer-events-auto absolute top-4 right-4 bottom-4 z-40 flex w-72 flex-col overflow-hidden rounded-lg bg-ink-2/95 shadow-2xl backdrop-blur-md"
+    >
+      <div className="flex items-center justify-between border-b border-primary/15 px-4 py-3">
+        <h3 className="grimoire-title text-sm text-primary">Propriedades do pin</h3>
+        <button
+          onClick={onClose}
+          aria-label="Fechar propriedades"
+          title="Fechar"
+          className="grid size-6 place-items-center rounded hover:bg-primary/10 hover:text-primary"
+        >
+          <X className="size-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="scrollbar-arcane flex-1 space-y-4 overflow-y-auto px-4 py-3">
+        <div>
+          <label
+            htmlFor={`pin-label-${obj.id}`}
+            className="mb-1 block text-[10px] uppercase tracking-widest text-muted-foreground"
+          >
+            Nome
+          </label>
+          <input
+            ref={inputRef}
+            id={`pin-label-${obj.id}`}
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            onBlur={commitLabel}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") {
+                setLabel(obj.label ?? "");
+                e.currentTarget.blur();
+              }
+            }}
+            placeholder="Sem nome"
+            className="w-full rounded border border-primary/20 bg-ink px-2 py-1.5 text-xs text-primary"
+          />
+        </div>
+
+        <div>
+          <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-widest text-muted-foreground">
+            <span>Tamanho</span>
+            <span>{obj.width || 40}px</span>
+          </div>
+          <Slider
+            defaultValue={[obj.width || 40]}
+            min={20}
+            max={200}
+            step={4}
+            onValueCommit={([v]) => onResizeCommit(obj, v, v)}
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor={`pin-char-${obj.id}`}
+            className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground"
+          >
+            <UserRound className="size-3 text-primary/70" aria-hidden="true" />
+            Personagem vinculado
+          </label>
+          <select
+            id={`pin-char-${obj.id}`}
+            value={obj.character_id ?? ""}
+            onChange={(e) => onLinkCharacter?.(obj, e.target.value || null)}
+            className="w-full rounded border border-primary/20 bg-ink px-2 py-1.5 text-xs text-primary"
+          >
+            <option value="">Nenhum (letra)</option>
+            {characters.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => onToggleLock?.(obj)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs ring-1 ${
+              obj.locked
+                ? "bg-primary/25 ring-primary/50 text-primary"
+                : "ring-primary/20 text-muted-foreground hover:bg-primary/10"
+            }`}
+          >
+            {obj.locked ? (
+              <Lock className="size-3.5" aria-hidden="true" />
+            ) : (
+              <Unlock className="size-3.5" aria-hidden="true" />
+            )}
+            {obj.locked ? "Travado" : "Destravado"}
+          </button>
+          <button
+            onClick={() => onToggleVisibility?.(obj)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs ring-1 ${
+              obj.visible_to_players
+                ? "bg-primary/25 ring-primary/50 text-primary"
+                : "ring-primary/20 text-muted-foreground hover:bg-primary/10"
+            }`}
+          >
+            {obj.visible_to_players ? (
+              <Eye className="size-3.5" aria-hidden="true" />
+            ) : (
+              <EyeOff className="size-3.5" aria-hidden="true" />
+            )}
+            {obj.visible_to_players ? "Visível" : "Oculto"}
+          </button>
+        </div>
+
+        <div className="border-t border-primary/10 pt-3">
+          <div className="mb-2 flex items-center justify-between">
+            <label htmlFor={`pin-light-${obj.id}`} className="flex items-center gap-1.5 text-xs">
+              <Flame className="size-3.5 text-primary" aria-hidden="true" />
+              Emite luz
+            </label>
+            <input
+              id={`pin-light-${obj.id}`}
+              type="checkbox"
+              checked={obj.has_light}
+              onChange={() => onSetLight?.(obj, { has_light: !obj.has_light })}
+              className="size-4 accent-primary"
+            />
+          </div>
+          {obj.has_light && (
+            <>
+              <div className="mb-3 flex gap-1.5">
+                <button
+                  onClick={() => onSetLight?.(obj, { light_shape: "circle" })}
+                  className={`flex-1 rounded px-2 py-1 text-xs ring-1 ${
+                    obj.light_shape === "circle"
+                      ? "bg-primary/25 ring-primary/50 text-primary"
+                      : "ring-primary/20 text-muted-foreground hover:bg-primary/10"
+                  }`}
+                >
+                  ◯ Círculo
+                </button>
+                <button
+                  onClick={() => onSetLight?.(obj, { light_shape: "cone" })}
+                  className={`flex-1 rounded px-2 py-1 text-xs ring-1 ${
+                    obj.light_shape === "cone"
+                      ? "bg-primary/25 ring-primary/50 text-primary"
+                      : "ring-primary/20 text-muted-foreground hover:bg-primary/10"
+                  }`}
+                >
+                  ◣ Cone
+                </button>
+              </div>
+              <div className="mb-3">
+                <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>{obj.light_shape === "cone" ? "Alcance do cone" : "Raio da luz"}</span>
+                  <span>{obj.light_radius}px</span>
+                </div>
+                <Slider
+                  defaultValue={[obj.light_radius]}
+                  min={50}
+                  max={1000}
+                  step={25}
+                  onValueCommit={([v]) => onSetLight?.(obj, { light_radius: v })}
+                />
+              </div>
+              {obj.light_shape === "cone" && (
+                <div className="mb-3">
+                  <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                    <span>Abertura do cone</span>
+                    <span>{obj.light_cone_width}°</span>
+                  </div>
+                  <Slider
+                    defaultValue={[obj.light_cone_width]}
+                    min={15}
+                    max={180}
+                    step={5}
+                    onValueCommit={([v]) => onSetLight?.(obj, { light_cone_width: v })}
+                  />
+                </div>
+              )}
+            </>
+          )}
+          <div className="flex items-center justify-between">
+            <label htmlFor={`pin-fog-${obj.id}`} className="flex items-center gap-1.5 text-xs">
+              <Ghost className="size-3.5 text-primary" aria-hidden="true" />
+              Só visível se iluminado
+            </label>
+            <input
+              id={`pin-fog-${obj.id}`}
+              type="checkbox"
+              checked={obj.hidden_when_dark}
+              onChange={() => onSetLight?.(obj, { hidden_when_dark: !obj.hidden_when_dark })}
+              className="size-4 accent-primary"
+            />
+          </div>
+        </div>
+
+        <div className="border-t border-primary/10 pt-3">
+          <span className="mb-1 block text-[10px] uppercase tracking-widest text-muted-foreground">
+            Camada
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => onReorder?.(obj, "back")}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs ring-1 ring-primary/20 text-muted-foreground hover:bg-primary/10"
+            >
+              <ChevronsDown className="size-3.5" aria-hidden="true" />
+              Trás
+            </button>
+            <button
+              onClick={() => onReorder?.(obj, "front")}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs ring-1 ring-primary/20 text-muted-foreground hover:bg-primary/10"
+            >
+              <ChevronsUp className="size-3.5" aria-hidden="true" />
+              Frente
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-2 border-t border-primary/15 px-4 py-3">
+        <button
+          onClick={() => onDuplicateObject?.(obj)}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs ring-1 ring-primary/25 text-primary hover:bg-primary/15"
+        >
+          <Copy className="size-3.5" aria-hidden="true" />
+          Duplicar
+        </button>
+        <button
+          onClick={() => onRemoveObject?.(obj)}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs ring-1 ring-destructive/40 text-destructive hover:bg-destructive/20"
+        >
+          <X className="size-3.5" aria-hidden="true" />
+          Remover
+        </button>
+      </div>
+    </div>
+  );
+}

@@ -142,7 +142,7 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
     if (!character) return;
     const characterId = character.id;
     const channel = supabase
-      .channel(`dice_rolls:${characterId}`)
+      .channel(`dice_rolls:${characterId}:${Math.random().toString(36).slice(2)}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "dice_rolls", filter: `character_id=eq.${characterId}` },
