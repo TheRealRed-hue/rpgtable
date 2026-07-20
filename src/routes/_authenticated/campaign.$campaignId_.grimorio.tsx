@@ -14,7 +14,7 @@ import { ensureCampaignMembership } from "./campaign.$campaignId";
 import type { Campaign, CampaignPage } from "@/lib/board-types";
 import { GrimoireSidebar } from "@/components/grimoire/GrimoireSidebar";
 import { BlockEditor } from "@/components/grimoire/BlockEditor";
-import { ArrowLeft, BookOpenText, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, BookOpenText, Eye, EyeOff, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/campaign/$campaignId_/grimorio")({
@@ -167,6 +167,18 @@ function GrimorioPage() {
               Grimório — {campaign.name}
             </h1>
           </div>
+          <nav className="ml-2 flex items-center gap-1 rounded-md bg-ink/50 p-0.5 text-xs">
+            <span className="flex items-center gap-1.5 rounded bg-primary/15 px-2.5 py-1 text-primary">
+              <BookOpenText className="size-3.5" /> Livro
+            </span>
+            <Link
+              to="/campaign/$campaignId/sistema"
+              params={{ campaignId }}
+              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-muted-foreground hover:text-primary"
+            >
+              <Sparkles className="size-3.5" /> Sistema
+            </Link>
+          </nav>
         </div>
         {isMaster && selectedPage && (
           <button

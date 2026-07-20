@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedTablesRouteImport } from './routes/_authenticated/tables'
 import { Route as AuthenticatedCharactersRouteImport } from './routes/_authenticated/characters'
 import { Route as AuthenticatedCampaignCampaignIdRouteImport } from './routes/_authenticated/campaign.$campaignId'
+import { Route as AuthenticatedCampaignCampaignIdSistemaRouteImport } from './routes/_authenticated/campaign.$campaignId_.sistema'
 import { Route as AuthenticatedCampaignCampaignIdGrimorioRouteImport } from './routes/_authenticated/campaign.$campaignId_.grimorio'
 
 const AuthRoute = AuthRouteImport.update({
@@ -47,6 +48,12 @@ const AuthenticatedCampaignCampaignIdRoute =
     path: '/campaign/$campaignId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedCampaignCampaignIdSistemaRoute =
+  AuthenticatedCampaignCampaignIdSistemaRouteImport.update({
+    id: '/campaign/$campaignId_/sistema',
+    path: '/campaign/$campaignId/sistema',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedCampaignCampaignIdGrimorioRoute =
   AuthenticatedCampaignCampaignIdGrimorioRouteImport.update({
     id: '/campaign/$campaignId_/grimorio',
@@ -61,6 +68,7 @@ export interface FileRoutesByFullPath {
   '/tables': typeof AuthenticatedTablesRoute
   '/campaign/$campaignId': typeof AuthenticatedCampaignCampaignIdRoute
   '/campaign/$campaignId/grimorio': typeof AuthenticatedCampaignCampaignIdGrimorioRoute
+  '/campaign/$campaignId/sistema': typeof AuthenticatedCampaignCampaignIdSistemaRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -69,6 +77,7 @@ export interface FileRoutesByTo {
   '/tables': typeof AuthenticatedTablesRoute
   '/campaign/$campaignId': typeof AuthenticatedCampaignCampaignIdRoute
   '/campaign/$campaignId/grimorio': typeof AuthenticatedCampaignCampaignIdGrimorioRoute
+  '/campaign/$campaignId/sistema': typeof AuthenticatedCampaignCampaignIdSistemaRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -79,6 +88,7 @@ export interface FileRoutesById {
   '/_authenticated/tables': typeof AuthenticatedTablesRoute
   '/_authenticated/campaign/$campaignId': typeof AuthenticatedCampaignCampaignIdRoute
   '/_authenticated/campaign/$campaignId_/grimorio': typeof AuthenticatedCampaignCampaignIdGrimorioRoute
+  '/_authenticated/campaign/$campaignId_/sistema': typeof AuthenticatedCampaignCampaignIdSistemaRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -89,6 +99,7 @@ export interface FileRouteTypes {
     | '/tables'
     | '/campaign/$campaignId'
     | '/campaign/$campaignId/grimorio'
+    | '/campaign/$campaignId/sistema'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -97,6 +108,7 @@ export interface FileRouteTypes {
     | '/tables'
     | '/campaign/$campaignId'
     | '/campaign/$campaignId/grimorio'
+    | '/campaign/$campaignId/sistema'
   id:
     | '__root__'
     | '/'
@@ -106,6 +118,7 @@ export interface FileRouteTypes {
     | '/_authenticated/tables'
     | '/_authenticated/campaign/$campaignId'
     | '/_authenticated/campaign/$campaignId_/grimorio'
+    | '/_authenticated/campaign/$campaignId_/sistema'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -158,6 +171,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCampaignCampaignIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/campaign/$campaignId_/sistema': {
+      id: '/_authenticated/campaign/$campaignId_/sistema'
+      path: '/campaign/$campaignId/sistema'
+      fullPath: '/campaign/$campaignId/sistema'
+      preLoaderRoute: typeof AuthenticatedCampaignCampaignIdSistemaRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/campaign/$campaignId_/grimorio': {
       id: '/_authenticated/campaign/$campaignId_/grimorio'
       path: '/campaign/$campaignId/grimorio'
@@ -173,6 +193,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedTablesRoute: typeof AuthenticatedTablesRoute
   AuthenticatedCampaignCampaignIdRoute: typeof AuthenticatedCampaignCampaignIdRoute
   AuthenticatedCampaignCampaignIdGrimorioRoute: typeof AuthenticatedCampaignCampaignIdGrimorioRoute
+  AuthenticatedCampaignCampaignIdSistemaRoute: typeof AuthenticatedCampaignCampaignIdSistemaRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
@@ -181,6 +202,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCampaignCampaignIdRoute: AuthenticatedCampaignCampaignIdRoute,
   AuthenticatedCampaignCampaignIdGrimorioRoute:
     AuthenticatedCampaignCampaignIdGrimorioRoute,
+  AuthenticatedCampaignCampaignIdSistemaRoute:
+    AuthenticatedCampaignCampaignIdSistemaRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =

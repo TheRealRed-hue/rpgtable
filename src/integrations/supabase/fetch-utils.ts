@@ -32,6 +32,21 @@ export function createSupabaseFetch(supabaseKey: string): typeof fetch {
     }
 
     headers.set("apikey", supabaseKey);
-    return fetch(input, { ...init, headers });
+
+    if (typeof window !== "undefined") {
+      headers.set("X-Client-Environment", "browser");
+      headers.set("X-Client-Origin", window.location.origin);
+    }
+
+    return fetch(input, { ...init, headers }).catch((error) => {
+      if (typeof window !== "undefined" && error instanceof TypeError) {
+        console.error("[Supabase] network request failed", {
+          error,
+          origin: window.location.origin,
+          url: typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url,
+        });
+      }
+      throw error;
+    });
   };
 }

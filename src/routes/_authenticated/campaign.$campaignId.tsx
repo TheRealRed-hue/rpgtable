@@ -113,7 +113,13 @@ function CampaignPage() {
   const [focusRequest, setFocusRequest] = useState<{ id: string; nonce: number } | null>(null);
 
   useEffect(() => {
-    getLocalUser().then((user) => setUserId(user?.id ?? null));
+    let mounted = true;
+    getLocalUser().then((user) => {
+      if (mounted) setUserId(user?.id ?? null);
+    });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const { data: campaign } = useQuery({
@@ -975,6 +981,7 @@ function CampaignPage() {
         character={openCharacter}
         onOpenChange={(open) => !open && setOpenCharacterId(null)}
         canEdit={!!openCharacter && (openCharacter.owner_id === userId || isMaster)}
+        isMaster={isMaster}
       />
     </div>
   );

@@ -29,7 +29,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Trash2, Dices, Eye, EyeOff, Loader2, X, Camera, UserRound } from "lucide-react";
+import { Plus, Trash2, Dices, Eye, EyeOff, Loader2, X, Camera, UserRound, Gem } from "lucide-react";
 import { toast } from "sonner";
 
 interface Props {
@@ -39,9 +39,21 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   /** Owner of the character, or the campaign master, may edit layout + values. */
   canEdit: boolean;
+  /**
+   * True only for the actual campaign master (never the character's owner).
+   * Gates skill-point grants specifically — canEdit alone would let a player
+   * hand skill points to themselves, since owners also pass canEdit.
+   */
+  isMaster?: boolean;
 }
 
-export function CharacterSheetEditor({ campaignId, character, onOpenChange, canEdit }: Props) {
+export function CharacterSheetEditor({
+  campaignId,
+  character,
+  onOpenChange,
+  canEdit,
+  isMaster = false,
+}: Props) {
   const qc = useQueryClient();
   const [tabs, setTabs] = useState<SheetTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>("");
@@ -186,6 +198,21 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
     else qc.invalidateQueries({ queryKey: ["characters"] });
   };
 
+  // Master-only grant, separate from `persist` so a stray blur on the name
+  // or sheet fields never accidentally touches points, and vice versa.
+  // Skill points are spent via the unlock_skill_node RPC (sistema page) but
+  // granted here by hand, same as a master would hand out XP at the table.
+  const updateSkillPoints = async (value: number) => {
+    if (!character) return;
+    const next = Math.max(0, Math.round(value));
+    const { error } = await supabase
+      .from("characters")
+      .update({ skill_points_available: next })
+      .eq("id", character.id);
+    if (error) toast.error("Não foi possível salvar os pontos: " + error.message);
+    else qc.invalidateQueries({ queryKey: ["characters"] });
+  };
+
   const deleteCharacter = async () => {
     if (!character) return;
     if (!confirm(`Apagar "${character.name}"? Isso remove a ficha e o token da mesa.`)) return;
@@ -317,6 +344,34 @@ export function CharacterSheetEditor({ campaignId, character, onOpenChange, canE
                 <SheetDescription>Ficha de personagem — totalmente customizável.</SheetDescription>
               </div>
             </SheetHeader>
+
+            {campaignId && character && (
+              <div className="mt-3 flex items-center gap-1.5 rounded-full bg-ink/50 px-2.5 py-1 text-xs text-muted-foreground w-fit">
+                <Gem className="size-3.5 text-primary" aria-hidden="true" />
+                {isMaster ? (
+                  <>
+                    <Input
+                      type="number"
+                      min={0}
+                      defaultValue={character.skill_points_available}
+                      key={character.id + character.skill_points_available}
+                      onBlur={(e) => {
+                        const value = Number(e.target.value);
+                        if (!Number.isNaN(value) && value !== character.skill_points_available) {
+                          updateSkillPoints(value);
+                        }
+                      }}
+                      className="h-5 w-14 border-none bg-transparent px-0 text-xs shadow-none focus-visible:ring-0"
+                    />
+                    <span>pontos de habilidade</span>
+                  </>
+                ) : (
+                  <span className="text-primary">
+                    {character.skill_points_available} pontos de habilidade
+                  </span>
+                )}
+              </div>
+            )}
 
             {canEdit && (
               <div className="mt-3 flex flex-wrap items-center gap-2">

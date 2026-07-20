@@ -123,6 +123,7 @@ export type Database = {
           owner_id: string;
           portrait_path: string | null;
           sheet: Json;
+          skill_points_available: number;
           updated_at: string;
           visible_to_players: boolean;
         };
@@ -134,6 +135,7 @@ export type Database = {
           owner_id: string;
           portrait_path?: string | null;
           sheet?: Json;
+          skill_points_available?: number;
           updated_at?: string;
           visible_to_players?: boolean;
         };
@@ -145,6 +147,7 @@ export type Database = {
           owner_id?: string;
           portrait_path?: string | null;
           sheet?: Json;
+          skill_points_available?: number;
           updated_at?: string;
           visible_to_players?: boolean;
         };
@@ -477,6 +480,176 @@ export type Database = {
           },
         ];
       };
+      skill_trees: {
+        Row: {
+          id: string;
+          campaign_id: string;
+          title: string;
+          description: string | null;
+          created_by: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          campaign_id: string;
+          title?: string;
+          description?: string | null;
+          created_by: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          campaign_id?: string;
+          title?: string;
+          description?: string | null;
+          created_by?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "skill_trees_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      skill_nodes: {
+        Row: {
+          id: string;
+          tree_id: string;
+          title: string;
+          description: string | null;
+          cost: number;
+          color: string;
+          effect: Json;
+          x: number;
+          y: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          tree_id: string;
+          title?: string;
+          description?: string | null;
+          cost?: number;
+          color?: string;
+          effect?: Json;
+          x?: number;
+          y?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          tree_id?: string;
+          title?: string;
+          description?: string | null;
+          cost?: number;
+          color?: string;
+          effect?: Json;
+          x?: number;
+          y?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "skill_nodes_tree_id_fkey";
+            columns: ["tree_id"];
+            isOneToOne: false;
+            referencedRelation: "skill_trees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      skill_edges: {
+        Row: {
+          id: string;
+          tree_id: string;
+          from_node_id: string;
+          to_node_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tree_id: string;
+          from_node_id: string;
+          to_node_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tree_id?: string;
+          from_node_id?: string;
+          to_node_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "skill_edges_tree_id_fkey";
+            columns: ["tree_id"];
+            isOneToOne: false;
+            referencedRelation: "skill_trees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "skill_edges_from_node_id_fkey";
+            columns: ["from_node_id"];
+            isOneToOne: false;
+            referencedRelation: "skill_nodes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "skill_edges_to_node_id_fkey";
+            columns: ["to_node_id"];
+            isOneToOne: false;
+            referencedRelation: "skill_nodes";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      character_skill_unlocks: {
+        Row: {
+          id: string;
+          character_id: string;
+          node_id: string;
+          unlocked_at: string;
+        };
+        Insert: {
+          id?: string;
+          character_id: string;
+          node_id: string;
+          unlocked_at?: string;
+        };
+        Update: {
+          id?: string;
+          character_id?: string;
+          node_id?: string;
+          unlocked_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "character_skill_unlocks_character_id_fkey";
+            columns: ["character_id"];
+            isOneToOne: false;
+            referencedRelation: "characters";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "character_skill_unlocks_node_id_fkey";
+            columns: ["node_id"];
+            isOneToOne: false;
+            referencedRelation: "skill_nodes";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -511,6 +684,19 @@ export type Database = {
       };
       rotate_own_light: {
         Args: { _object_id: string; _angle: number };
+        Returns: undefined;
+      };
+      unlock_skill_node: {
+        Args: { _character_id: string; _node_id: string };
+        Returns: {
+          id: string;
+          character_id: string;
+          node_id: string;
+          unlocked_at: string;
+        };
+      };
+      revert_skill_node: {
+        Args: { _character_id: string; _node_id: string };
         Returns: undefined;
       };
     };

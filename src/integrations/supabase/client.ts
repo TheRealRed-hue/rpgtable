@@ -43,6 +43,9 @@ function createSupabaseClient() {
       persistSession: true,
       autoRefreshToken: true,
     },
+    db: {
+      schema: "public",
+    },
   });
 }
 

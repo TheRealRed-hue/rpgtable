@@ -78,3 +78,30 @@ export const FILE_ICONS: Record<string, string> = {
   shield: "◈",
   crystal: "◇",
 };
+
+// ---------- Skill Tree ("Sistema") ----------
+// Free-canvas talent constellation: the master places nodes anywhere and
+// wires them together by hand (no computed layout, no tiers). An edge IS
+// the prerequisite — a node lights up once it or a connected node is
+// unlocked. See supabase/migrations/20260720120000_skill_trees.sql.
+export type SkillTree = Database["public"]["Tables"]["skill_trees"]["Row"];
+export type SkillNode = Database["public"]["Tables"]["skill_nodes"]["Row"];
+export type SkillEdge = Database["public"]["Tables"]["skill_edges"]["Row"];
+export type CharacterSkillUnlock =
+  Database["public"]["Tables"]["character_skill_unlocks"]["Row"];
+
+export type SkillNodeColor = "gold" | "blue" | "green" | "purple" | "red";
+
+export const SKILL_NODE_COLORS: Record<SkillNodeColor, { glow: string; label: string }> = {
+  gold: { glow: "#e8c766", label: "Dourado" },
+  blue: { glow: "#6ec3e0", label: "Azul" },
+  green: { glow: "#7fd394", label: "Verde" },
+  purple: { glow: "#b48ee0", label: "Roxo" },
+  red: { glow: "#e08a7d", label: "Vermelho" },
+};
+
+/** Effect payload written by the master, shown verbatim on the sheet — the
+ * app never interprets it, since every table's rules differ. */
+export interface SkillNodeEffect {
+  text?: string;
+}
