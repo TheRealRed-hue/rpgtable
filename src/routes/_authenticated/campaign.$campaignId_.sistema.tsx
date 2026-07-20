@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, BookOpenText, Sparkles, Gem, Plus, Loader2 } from "lucide-react";
+import { ArrowLeft, BookOpenText, Sparkles, Gem, Plus, Loader2, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -389,11 +389,39 @@ function PlayerTreeView({
   });
 
   // Characters built from "Seus Personagens" (the personal library) have
-  // campaign_id = null until brought into a table, so they never show up
-  // here — this is the most common reason the picker looks empty even
-  // though the player already has a sheet somewhere. Creating directly
-  // from this page (same insert CharacterPanel uses on the board) sidesteps
-  // that confusion entirely for the skill-tree flow.
+  // campaign_id = null until brought into a table — same gap as
+  // CharacterPanel on the board. Offer to attach one of those instead of
+  // only ever creating a fresh sheet per table.
+  const { data: libraryCharacters = [] } = useQuery({
+    queryKey: ["characters", "library-unlinked", userId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("characters")
+        .select("*")
+        .is("campaign_id", null)
+        .eq("owner_id", userId!)
+        .order("name");
+      if (error) throw error;
+      return data as Character[];
+    },
+    enabled: !!userId,
+  });
+
+  const [linkingId, setLinkingId] = useState<string | null>(null);
+  const linkCharacter = async (id: string) => {
+    if (!campaignId) return;
+    setLinkingId(id);
+    const { error } = await supabase.from("characters").update({ campaign_id: campaignId }).eq("id", id);
+    setLinkingId(null);
+    if (error) {
+      toast.error("Não foi possível trazer o personagem: " + error.message);
+      return;
+    }
+    qc.invalidateQueries({ queryKey: ["characters", "own", campaignId, userId] });
+    qc.invalidateQueries({ queryKey: ["characters", "library-unlinked", userId] });
+    setCharacterId(id);
+  };
+
   const createCharacter = async () => {
     if (!userId || !campaignId) return;
     setCreatingCharacter(true);
@@ -403,11 +431,15 @@ function PlayerTreeView({
       .select()
       .single();
     setCreatingCharacter(false);
+    // Refetch regardless of outcome: a dropped connection can report an
+    // error to the client even though the insert landed server-side —
+    // refetching surfaces it instead of leaving the button inviting a
+    // second, duplicate click.
+    qc.invalidateQueries({ queryKey: ["characters", "own", campaignId, userId] });
     if (error) {
       toast.error("Não foi possível criar o personagem: " + error.message);
       return;
     }
-    qc.invalidateQueries({ queryKey: ["characters", "own", campaignId, userId] });
     setCharacterId(data.id);
   };
 
@@ -521,11 +553,32 @@ function PlayerTreeView({
       )}
       {characters.length === 0 && (
         <div className="grid h-full place-items-center gap-3 text-center">
-          <p className="text-sm italic text-ink/50">
-            Você ainda não tem um personagem nessa mesa.
-            <br />
-            (Personagens da sua biblioteca não aparecem aqui até serem criados dentro desta mesa.)
-          </p>
+          <p className="text-sm italic text-ink/50">Você ainda não tem um personagem nessa mesa.</p>
+          {libraryCharacters.length > 0 && (
+            <div className="w-64 space-y-1 rounded-md border border-dashed border-primary/20 p-2 text-left">
+              <p className="px-1 text-[10px] leading-relaxed text-muted-foreground">
+                Personagens da sua biblioteca, ainda em nenhuma mesa:
+              </p>
+              {libraryCharacters.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => linkCharacter(c.id)}
+                  disabled={linkingId === c.id}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-primary/5 hover:text-primary disabled:opacity-50"
+                >
+                  {linkingId === c.id ? (
+                    <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                  ) : (
+                    <UserRound className="size-3.5 shrink-0 text-primary/60" />
+                  )}
+                  <span className="flex-1 truncate">{c.name}</span>
+                  <span className="text-[9px] uppercase tracking-widest text-primary/70">
+                    Inserir na mesa
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           <Button size="sm" onClick={createCharacter} disabled={creatingCharacter || !userId}>
             {creatingCharacter ? (
               <Loader2 className="mr-1.5 size-3.5 animate-spin" />

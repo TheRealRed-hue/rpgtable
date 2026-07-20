@@ -24,11 +24,13 @@ export function createSupabaseFetch(supabaseKey: string): typeof fetch {
       new Headers(init.headers).forEach((value, key) => headers.set(key, value));
     }
 
-    if (
-      isNewSupabaseApiKey(supabaseKey) &&
-      headers.get("Authorization") === `Bearer ${supabaseKey}`
-    ) {
-      headers.delete("Authorization");
+    if (isNewSupabaseApiKey(supabaseKey)) {
+      if (headers.get("Authorization") === `Bearer ${supabaseKey}`) {
+        headers.delete("Authorization");
+      }
+      if (headers.get("authorization") === `Bearer ${supabaseKey}`) {
+        headers.delete("authorization");
+      }
     }
 
     headers.set("apikey", supabaseKey);

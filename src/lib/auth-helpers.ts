@@ -23,9 +23,13 @@ import { supabase } from "@/integrations/supabase/client";
  * needs refreshing (handled automatically, infrequently, by `autoRefreshToken`).
  */
 export async function getLocalUser() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) return null;
-  return data.session?.user ?? null;
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) return null;
+    return data.session?.user ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export type AuthErrorKind =

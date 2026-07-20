@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Character } from "@/lib/board-types";
 import { Button } from "@/components/ui/button";
-import { Plus, Loader2, Eye, EyeOff, UserCircle2 } from "lucide-react";
+import { Plus, Loader2, Eye, EyeOff, UserCircle2, Link2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface Props {
@@ -28,6 +28,42 @@ export function CharacterPanel({
 }: Props) {
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const [linkingId, setLinkingId] = useState<string | null>(null);
+
+  // "Seus Personagens" (the personal library) creates characters with
+  // campaign_id = null — they were never reachable from any table until
+  // now. This surfaces them here so a player can attach an existing sheet
+  // instead of only ever starting a fresh "Novo personagem" per table.
+  const { data: libraryCharacters = [] } = useQuery({
+    queryKey: ["characters", "library-unlinked", currentUserId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("characters")
+        .select("*")
+        .is("campaign_id", null)
+        .eq("owner_id", currentUserId!)
+        .order("name");
+      if (error) throw error;
+      return data as Character[];
+    },
+    enabled: !!currentUserId,
+  });
+
+  const linkCharacter = async (characterId: string) => {
+    setLinkingId(characterId);
+    const { error } = await supabase
+      .from("characters")
+      .update({ campaign_id: campaignId })
+      .eq("id", characterId);
+    setLinkingId(null);
+    if (error) {
+      toast.error("Não foi possível trazer o personagem: " + error.message);
+      return;
+    }
+    toast.success("Personagem trazido para a mesa!");
+    qc.invalidateQueries({ queryKey: ["characters", campaignId] });
+    qc.invalidateQueries({ queryKey: ["characters", "library-unlinked", currentUserId] });
+  };
 
   // Players only see their own characters plus anything the master marked
   // visible (NPCs shown to the table); the master sees every sheet,
@@ -52,7 +88,14 @@ export function CharacterPanel({
       qc.invalidateQueries({ queryKey: ["characters", campaignId] });
       onOpenCharacter(character);
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => {
+      toast.error(e.message);
+      // The request may have actually landed even though the client saw a
+      // failure (dropped connection, not a real rejection) — refetch so a
+      // silently-successful create shows up instead of inviting a retry
+      // that creates a duplicate.
+      qc.invalidateQueries({ queryKey: ["characters", campaignId] });
+    },
     onSettled: () => setCreating(false),
   });
 
@@ -67,6 +110,32 @@ export function CharacterPanel({
         Cada personagem tem sua própria ficha, montada do seu jeito. Arraste um card para a mesa
         para colocar o token.
       </p>
+
+      {libraryCharacters.length > 0 && (
+        <div className="mb-3 space-y-1 rounded-md border border-dashed border-primary/20 p-2">
+          <p className="px-1 text-[10px] leading-relaxed text-muted-foreground">
+            Personagens da sua biblioteca, ainda em nenhuma mesa:
+          </p>
+          {libraryCharacters.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => linkCharacter(c.id)}
+              disabled={linkingId === c.id}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-primary/5 hover:text-primary disabled:opacity-50"
+            >
+              {linkingId === c.id ? (
+                <Loader2 className="size-3.5 shrink-0 animate-spin" />
+              ) : (
+                <Link2 className="size-3.5 shrink-0 text-primary/60" />
+              )}
+              <span className="flex-1 truncate">{c.name}</span>
+              <span className="text-[9px] uppercase tracking-widest text-primary/70">
+                Inserir na mesa
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <Button
         size="sm"
