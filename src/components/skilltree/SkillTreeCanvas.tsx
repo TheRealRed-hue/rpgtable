@@ -48,6 +48,18 @@ export function SkillTreeCanvas({
   const panning = useRef<{ startClientX: number; startClientY: number; startX: number; startY: number } | null>(
     null,
   );
+  // Every pointer currently down on the background, keyed by pointerId — a
+  // second finger touching down switches a one-finger pan into a two-finger
+  // pinch-zoom, same pattern as BoardCanvas.
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{
+    initialDist: number;
+    initialScale: number;
+    /** World-space point under the pinch midpoint at gesture start, kept
+     * fixed under the fingers as they move. */
+    wx: number;
+    wy: number;
+  } | null>(null);
 
   const toSvgPoint = useCallback((clientX: number, clientY: number) => {
     const svg = svgRef.current;
@@ -88,7 +100,24 @@ export function SkillTreeCanvas({
 
   const handleBackgroundPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
-    panning.current = { startClientX: e.clientX, startClientY: e.clientY, startX: view.x, startY: view.y };
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size === 2 && svgRef.current) {
+      // Second finger just landed — switch from pan to pinch-zoom.
+      panning.current = null;
+      const [p1, p2] = Array.from(pointersRef.current.values());
+      const rect = svgRef.current.getBoundingClientRect();
+      const midX = (p1.x + p2.x) / 2 - rect.left;
+      const midY = (p1.y + p2.y) / 2 - rect.top;
+      pinchRef.current = {
+        initialDist: Math.hypot(p1.x - p2.x, p1.y - p2.y) || 1,
+        initialScale: view.scale,
+        wx: (midX - view.x) / view.scale,
+        wy: (midY - view.y) / view.scale,
+      };
+    } else if (pointersRef.current.size === 1) {
+      panning.current = { startClientX: e.clientX, startClientY: e.clientY, startX: view.x, startY: view.y };
+    }
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -99,6 +128,23 @@ export function SkillTreeCanvas({
       onNodeDragMove?.(id, Math.round(p.x), Math.round(p.y));
       return;
     }
+
+    if (pointersRef.current.has(e.pointerId)) {
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    if (pinchRef.current && pointersRef.current.size === 2 && svgRef.current) {
+      const [p1, p2] = Array.from(pointersRef.current.values());
+      const rect = svgRef.current.getBoundingClientRect();
+      const midX = (p1.x + p2.x) / 2 - rect.left;
+      const midY = (p1.y + p2.y) / 2 - rect.top;
+      const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y) || 1;
+      const { initialDist, initialScale, wx, wy } = pinchRef.current;
+      const newScale = Math.min(2.5, Math.max(0.35, initialScale * (dist / initialDist)));
+      setView({ x: midX - wx * newScale, y: midY - wy * newScale, scale: newScale });
+      return;
+    }
+
     if (panning.current) {
       const { startClientX, startClientY, startX, startY } = panning.current;
       const dx = e.clientX - startClientX;
@@ -116,7 +162,9 @@ export function SkillTreeCanvas({
       }
       draggingNode.current = null;
     }
-    panning.current = null;
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size === 0) panning.current = null;
   };
 
   const handleNodePointerDown = (e: React.PointerEvent, id: string) => {

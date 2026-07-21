@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChevronRight, Trash2, FolderPlus, FilePlus2, Eye, EyeOff, Lock, LockOpen } from "lucide-react";
+import { ChevronRight, Trash2, FolderPlus, FilePlus2, Eye, EyeOff, Lock, LockOpen, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 interface Props {
@@ -195,7 +195,7 @@ export function GrimoireSidebar({ campaignId, pages, selectedId, onSelect, isMas
   const rootPages = leaves.filter((f) => f.parent_id === null);
 
   return (
-    <aside className="scrollbar-arcane flex h-full w-64 shrink-0 flex-col overflow-y-auto border-r border-primary/15 bg-ink-2/40">
+    <aside className="scrollbar-arcane flex h-full w-64 max-w-[85vw] shrink-0 flex-col overflow-y-auto border-r border-primary/15 bg-ink-2/40">
       {isMaster && (
         <div className="flex gap-1 border-b border-primary/10 p-2">
           <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
@@ -520,6 +520,14 @@ function FolderNode({
         {isMaster && !editing && (
           <>
             <button
+              onClick={() => setEditing(true)}
+              aria-label={`Renomear capítulo ${folder.title}`}
+              title="Renomear"
+              className="opacity-70 transition-opacity md:opacity-0 md:group-hover:opacity-70 hover:text-primary"
+            >
+              <Pencil className="size-3.5" aria-hidden="true" />
+            </button>
+            <button
               onClick={() => onToggleLock(folder)}
               aria-label={folder.is_locked ? "Destrancar capítulo" : "Trancar capítulo"}
               title={
@@ -528,7 +536,7 @@ function FolderNode({
                   : "Trancar para os jogadores"
               }
               className={`transition-opacity hover:text-primary ${
-                folder.is_locked ? "opacity-70" : "opacity-0 group-hover:opacity-70"
+                folder.is_locked ? "opacity-70" : "opacity-70 md:opacity-0 md:group-hover:opacity-70"
               }`}
             >
               {folder.is_locked ? (
@@ -542,7 +550,7 @@ function FolderNode({
               aria-label={folder.is_published ? "Esconder capítulo" : "Mostrar capítulo aos jogadores"}
               title={folder.is_published ? "Visível para jogadores" : "Só o mestre vê"}
               className={`transition-opacity hover:text-primary ${
-                folder.is_published ? "opacity-70" : "opacity-0 group-hover:opacity-70"
+                folder.is_published ? "opacity-70" : "opacity-70 md:opacity-0 md:group-hover:opacity-70"
               }`}
             >
               {folder.is_published ? (
@@ -554,7 +562,7 @@ function FolderNode({
             <button
               onClick={() => onDeleteFolder(folder.id)}
               aria-label={`Remover capítulo ${folder.title}`}
-              className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+              className="opacity-70 transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
               title="Remover"
             >
               <Trash2 className="size-3.5" aria-hidden="true" />
@@ -705,12 +713,23 @@ function PageNode({
           <button
             onClick={(e) => {
               e.stopPropagation();
+              setEditing(true);
+            }}
+            aria-label={`Renomear ${page.title}`}
+            title="Renomear"
+            className="opacity-70 transition-opacity md:opacity-0 md:group-hover:opacity-70 hover:text-primary"
+          >
+            <Pencil className="size-3" aria-hidden="true" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
               onTogglePublish();
             }}
             aria-label={page.is_published ? "Despublicar" : "Publicar para jogadores"}
             title={page.is_published ? "Visível para jogadores" : "Só o mestre vê"}
             className={`transition-opacity hover:text-primary ${
-              page.is_published ? "opacity-70" : "opacity-0 group-hover:opacity-70"
+              page.is_published ? "opacity-70" : "opacity-70 md:opacity-0 md:group-hover:opacity-70"
             }`}
           >
             {page.is_published ? (
@@ -725,7 +744,7 @@ function PageNode({
               onDelete();
             }}
             aria-label={`Remover ${page.title}`}
-            className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+            className="opacity-70 transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
           >
             <Trash2 className="size-3" aria-hidden="true" />
           </button>

@@ -43,7 +43,15 @@ export function NodePanel({ node, connecting, onToggleConnect, onSave, onDelete,
   };
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col gap-4 border-l border-primary/15 bg-ink-2/80 p-4 backdrop-blur-sm">
+    <>
+      {/* Backdrop so the panel reads as an overlay, not part of the page
+          flow, on small screens where it can't sit beside the canvas. */}
+      <div
+        className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <aside className="fixed inset-y-0 right-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col gap-4 overflow-y-auto border-l border-primary/15 bg-ink-2/95 p-4 backdrop-blur-sm lg:static lg:z-auto lg:max-w-none lg:bg-ink-2/80">
       <div className="flex items-center justify-between">
         <h2 className="grimoire-title text-sm text-primary">Nó da árvore</h2>
         <button onClick={onClose} className="grid size-6 place-items-center rounded text-muted-foreground hover:text-primary" aria-label="Fechar">
@@ -116,6 +124,7 @@ export function NodePanel({ node, connecting, onToggleConnect, onSave, onDelete,
           Excluir nó
         </Button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

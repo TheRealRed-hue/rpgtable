@@ -10,11 +10,20 @@ import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getLocalUser } from "@/lib/auth-helpers";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { ensureCampaignMembership } from "./campaign.$campaignId";
 import type { Campaign, CampaignPage } from "@/lib/board-types";
 import { GrimoireSidebar } from "@/components/grimoire/GrimoireSidebar";
 import { BlockEditor } from "@/components/grimoire/BlockEditor";
-import { ArrowLeft, BookOpenText, Eye, EyeOff, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpenText,
+  Eye,
+  EyeOff,
+  Sparkles,
+  PanelLeftOpen,
+  PanelLeftClose,
+} from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/campaign/$campaignId_/grimorio")({
@@ -32,8 +41,10 @@ export const Route = createFileRoute("/_authenticated/campaign/$campaignId_/grim
 function GrimorioPage() {
   const { campaignId } = Route.useParams();
   const qc = useQueryClient();
+  const isMobile = useIsMobile();
   const [userId, setUserId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [sidebarOpenMobile, setSidebarOpenMobile] = useState(false);
 
   useEffect(() => {
     getLocalUser().then((user) => setUserId(user?.id ?? null));
@@ -163,50 +174,93 @@ function GrimorioPage() {
           </Link>
           <div className="flex min-w-0 items-center gap-2">
             <BookOpenText className="size-4 shrink-0 text-primary" strokeWidth={1.25} aria-hidden="true" />
-            <h1 className="grimoire-title text-lg text-primary truncate max-w-[14rem] sm:max-w-[24rem]">
+            <h1 className="grimoire-title text-lg text-primary truncate max-w-[9rem] sm:max-w-[24rem]">
               Grimório — {campaign.name}
             </h1>
           </div>
-          <nav className="ml-2 flex items-center gap-1 rounded-md bg-ink/50 p-0.5 text-xs">
-            <span className="flex items-center gap-1.5 rounded bg-primary/15 px-2.5 py-1 text-primary">
-              <BookOpenText className="size-3.5" /> Livro
+          <nav className="ml-1 flex items-center gap-1 rounded-md bg-ink/50 p-0.5 text-xs sm:ml-2">
+            <span className="flex items-center gap-1.5 rounded bg-primary/15 px-2 py-1 text-primary sm:px-2.5">
+              <BookOpenText className="size-3.5" />
+              <span className="hidden sm:inline">Livro</span>
             </span>
             <Link
               to="/campaign/$campaignId/sistema"
               params={{ campaignId }}
-              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-muted-foreground hover:text-primary"
+              className="flex items-center gap-1.5 rounded px-2 py-1 text-muted-foreground hover:text-primary sm:px-2.5"
             >
-              <Sparkles className="size-3.5" /> Sistema
+              <Sparkles className="size-3.5" />
+              <span className="hidden sm:inline">Sistema</span>
             </Link>
           </nav>
         </div>
-        {isMaster && selectedPage && (
+        <div className="flex shrink-0 items-center gap-2">
+          {isMaster && selectedPage && (
+            <button
+              onClick={togglePublishSelected}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors sm:px-3 ${
+                selectedPage.is_published
+                  ? "bg-primary/15 text-primary"
+                  : "bg-ink/60 text-muted-foreground ring-1 ring-primary/15 hover:text-primary"
+              }`}
+            >
+              {selectedPage.is_published ? (
+                <Eye className="size-3.5" aria-hidden="true" />
+              ) : (
+                <EyeOff className="size-3.5" aria-hidden="true" />
+              )}
+              <span className="hidden sm:inline">
+                {selectedPage.is_published ? "Publicada" : "Só o mestre vê"}
+              </span>
+            </button>
+          )}
+
+          {/* Mobile-only toggle for the pages sidebar, which becomes an
+              overlay drawer on small screens instead of a fixed 256px
+              column squeezing the editor down to nothing. */}
           <button
-            onClick={togglePublishSelected}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-              selectedPage.is_published
-                ? "bg-primary/15 text-primary"
-                : "bg-ink/60 text-muted-foreground ring-1 ring-primary/15 hover:text-primary"
-            }`}
+            type="button"
+            onClick={() => setSidebarOpenMobile((v) => !v)}
+            aria-label={sidebarOpenMobile ? "Fechar páginas" : "Abrir páginas"}
+            aria-expanded={sidebarOpenMobile}
+            className="grid size-8 shrink-0 place-items-center rounded text-primary/80 hover:bg-primary/10 hover:text-primary lg:hidden"
           >
-            {selectedPage.is_published ? (
-              <Eye className="size-3.5" aria-hidden="true" />
+            {sidebarOpenMobile ? (
+              <PanelLeftClose className="size-4" aria-hidden="true" />
             ) : (
-              <EyeOff className="size-3.5" aria-hidden="true" />
+              <PanelLeftOpen className="size-4" aria-hidden="true" />
             )}
-            {selectedPage.is_published ? "Publicada" : "Só o mestre vê"}
           </button>
-        )}
+        </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <GrimoireSidebar
-          campaignId={campaignId}
-          pages={pages}
-          selectedId={selectedId}
-          onSelect={(p) => setSelectedId(p.id)}
-          isMaster={isMaster}
-        />
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        {/* Backdrop for the mobile drawer */}
+        {isMobile && sidebarOpenMobile && (
+          <div
+            className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+            onClick={() => setSidebarOpenMobile(false)}
+            aria-hidden="true"
+          />
+        )}
+
+        <div
+          className={`z-40 transition-transform duration-300 ease-out lg:static lg:translate-x-0 ${
+            isMobile
+              ? `fixed inset-y-0 left-0 top-14 ${sidebarOpenMobile ? "translate-x-0" : "-translate-x-full"}`
+              : ""
+          }`}
+        >
+          <GrimoireSidebar
+            campaignId={campaignId}
+            pages={pages}
+            selectedId={selectedId}
+            onSelect={(p) => {
+              setSelectedId(p.id);
+              setSidebarOpenMobile(false);
+            }}
+            isMaster={isMaster}
+          />
+        </div>
         <main className="parchment-surface flex min-h-0 flex-1 flex-col">
           {selectedPage ? (
             <BlockEditor

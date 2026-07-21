@@ -138,18 +138,18 @@ function TablesPage() {
   return (
     <div className="min-h-screen w-full">
       <header className="border-b border-border/60 bg-ink-2/40 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
-          <div className="flex items-center gap-3">
-            <Moon className="size-5 text-primary" strokeWidth={1.25} />
-            <h1 className="grimoire-title text-xl text-primary">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-3 sm:px-6 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <Moon className="size-5 shrink-0 text-primary" strokeWidth={1.25} />
+            <h1 className="grimoire-title truncate text-lg text-primary sm:text-xl">
               TableLab<span className="italic opacity-80">RPG</span>
             </h1>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-0.5 sm:gap-1.5">
             <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-primary">
               <Link to="/characters">
-                <UsersRound className="mr-2 size-4" />
-                Meus Personagens
+                <UsersRound className="size-4 sm:mr-2" />
+                <span className="hidden sm:inline">Meus Personagens</span>
               </Link>
             </Button>
             <Button
@@ -158,8 +158,8 @@ function TablesPage() {
               onClick={signOut}
               className="text-muted-foreground hover:text-primary"
             >
-              <LogOut className="mr-2 size-4" />
-              Sair
+              <LogOut className="size-4 sm:mr-2" />
+              <span className="hidden sm:inline">Sair</span>
             </Button>
           </div>
         </div>
@@ -268,7 +268,7 @@ function TablesPage() {
                           }}
                           aria-label={`Apagar mesa ${c.name}`}
                           title="Apagar mesa"
-                          className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
+                          className="opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
                         >
                           <Trash2 className="size-4" aria-hidden="true" />
                         </button>

@@ -162,20 +162,22 @@ function SistemaPage() {
           </Link>
           <div className="flex min-w-0 items-center gap-2">
             <Sparkles className="size-4 shrink-0 text-primary" strokeWidth={1.25} aria-hidden="true" />
-            <h1 className="grimoire-title text-lg text-primary truncate max-w-[14rem] sm:max-w-[24rem]">
+            <h1 className="grimoire-title text-lg text-primary truncate max-w-[9rem] sm:max-w-[24rem]">
               Sistema — {campaign.name}
             </h1>
           </div>
-          <nav className="ml-2 flex items-center gap-1 rounded-md bg-ink/50 p-0.5 text-xs">
+          <nav className="ml-1 flex items-center gap-1 rounded-md bg-ink/50 p-0.5 text-xs sm:ml-2">
             <Link
               to="/campaign/$campaignId/grimorio"
               params={{ campaignId }}
-              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-muted-foreground hover:text-primary"
+              className="flex items-center gap-1.5 rounded px-2 py-1 text-muted-foreground hover:text-primary sm:px-2.5"
             >
-              <BookOpenText className="size-3.5" /> Livro
+              <BookOpenText className="size-3.5" />
+              <span className="hidden sm:inline">Livro</span>
             </Link>
-            <span className="flex items-center gap-1.5 rounded bg-primary/15 px-2.5 py-1 text-primary">
-              <Sparkles className="size-3.5" /> Sistema
+            <span className="flex items-center gap-1.5 rounded bg-primary/15 px-2 py-1 text-primary sm:px-2.5">
+              <Sparkles className="size-3.5" />
+              <span className="hidden sm:inline">Sistema</span>
             </span>
           </nav>
           {isActualMaster && (
@@ -555,7 +557,7 @@ function PlayerTreeView({
         <div className="grid h-full place-items-center gap-3 text-center">
           <p className="text-sm italic text-ink/50">Você ainda não tem um personagem nessa mesa.</p>
           {libraryCharacters.length > 0 && (
-            <div className="w-64 space-y-1 rounded-md border border-dashed border-primary/20 p-2 text-left">
+            <div className="w-64 max-w-[85vw] space-y-1 rounded-md border border-dashed border-primary/20 p-2 text-left">
               <p className="px-1 text-[10px] leading-relaxed text-muted-foreground">
                 Personagens da sua biblioteca, ainda em nenhuma mesa:
               </p>

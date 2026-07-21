@@ -249,7 +249,7 @@ function BlockRow({
           <select
             value={block.type}
             onChange={(e) => onTypeChange(e.target.value as PageBlockType)}
-            className="opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 rounded border border-ink/15 bg-transparent px-1 py-0.5 text-[10px] text-ink/60 outline-none"
+            className="opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100 rounded border border-ink/15 bg-transparent px-1 py-0.5 text-[10px] text-ink/60 outline-none"
             title="Tipo de bloco"
           >
             {(Object.keys(PAGE_BLOCK_LABELS) as PageBlockType[]).map((value) => (
@@ -288,7 +288,7 @@ function BlockToolbar({
   onAddBelow: () => void;
 }) {
   return (
-    <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+    <div className="flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
       <button
         type="button"
         onClick={onAddBelow}
