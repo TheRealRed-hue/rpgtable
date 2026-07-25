@@ -21,6 +21,12 @@ interface BaseField {
   id: string; // stable id, referenced by dice formulas as {id}
   type: FieldType;
   label: string;
+  /**
+   * How many of the 2 grid columns this field spans. Optional so sheets
+   * saved before this existed keep rendering as single-column (their
+   * previous, only, layout) without a migration — see fieldWidth() below.
+   */
+  width?: 1 | 2;
 }
 
 export interface TextField extends BaseField {
@@ -80,6 +86,33 @@ export type SheetField =
   | ImageField
   | SectionField;
 
+// ---- Tabs (categories) ----
+// A character's `sheet` column is an array of tabs, each holding its own
+// fields — e.g. "Atributos", "Inventário", "Magias". Sheets created before
+// tabs existed stored a flat SheetField[] instead; normalizeSheet() below
+// upgrades that shape on read so old characters keep working untouched.
+
+export interface SheetTab {
+  id: string;
+  name: string;
+  fields: SheetField[];
+}
+
+export function makeTab(name: string, id: string): SheetTab {
+  return { id, name, fields: [] };
+}
+
+/** Accepts either the current `SheetTab[]` shape or a legacy flat
+ * `SheetField[]`, and always returns at least one tab. */
+export function normalizeSheet(raw: unknown): SheetTab[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  if (arr.length === 0) return [makeTab("Geral", "geral")];
+  const looksLikeTabs = "fields" in (arr[0] as object) && "name" in (arr[0] as object);
+  if (looksLikeTabs) return arr as SheetTab[];
+  // legacy: arr is actually SheetField[]
+  return [{ id: "geral", name: "Geral", fields: arr as SheetField[] }];
+}
+
 export const FIELD_PALETTE: { type: FieldType; label: string; icon: string }[] = [
   { type: "text", label: "Texto curto", icon: "❦" },
   { type: "textarea", label: "Texto longo", icon: "❧" },
@@ -92,6 +125,14 @@ export const FIELD_PALETTE: { type: FieldType; label: string; icon: string }[] =
   { type: "image", label: "Imagem", icon: "◈" },
   { type: "section", label: "Divisor de seção", icon: "—" },
 ];
+
+/** Section dividers are always full-width; every other field defaults to
+ * 1 column when `width` was never set (legacy sheets, or freshly added
+ * fields before the user picks a width). */
+export function fieldWidth(field: SheetField): 1 | 2 {
+  if (field.type === "section") return 2;
+  return field.width ?? 1;
+}
 
 export function makeField(type: FieldType, id: string): SheetField {
   const label = FIELD_PALETTE.find((f) => f.type === type)?.label ?? "Campo";

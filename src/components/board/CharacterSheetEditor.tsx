@@ -12,6 +12,7 @@ import {
   type SheetField,
   type SheetTab,
 } from "@/lib/character-sheet-types";
+import { fieldWidth } from "@/lib/characters-sheet-types";
 import {
   Sheet,
   SheetContent,
@@ -29,7 +30,20 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Trash2, Dices, Eye, EyeOff, Loader2, X, Camera, UserRound, Gem } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Dices,
+  Eye,
+  EyeOff,
+  Loader2,
+  X,
+  Camera,
+  UserRound,
+  Gem,
+  ChevronUp,
+  ChevronDown,
+} from "lucide-react";
 import { toast } from "sonner";
 
 interface Props {
@@ -243,6 +257,37 @@ export function CharacterSheetEditor({
   const removeField = (id: string) => {
     const next = tabs.map((t) =>
       t.id === activeTabId ? { ...t, fields: t.fields.filter((f) => f.id !== id) } : t,
+    );
+    setTabs(next);
+    persist.mutate({ sheet: next });
+  };
+
+  // Reorders within the active tab only — same array-position-is-order
+  // approach as the Grimório's moveBlock, and deliberately buttons instead
+  // of drag-and-drop: native HTML5 DnD is the thing that doesn't work on
+  // touch elsewhere in this app (GrimoireSidebar), so this sidesteps that
+  // class of bug entirely instead of reintroducing it here.
+  const moveField = (id: string, dir: -1 | 1) => {
+    const idx = fields.findIndex((f) => f.id === id);
+    const target = idx + dir;
+    if (idx === -1 || target < 0 || target >= fields.length) return;
+    const reordered = [...fields];
+    [reordered[idx], reordered[target]] = [reordered[target], reordered[idx]];
+    const next = tabs.map((t) => (t.id === activeTabId ? { ...t, fields: reordered } : t));
+    setTabs(next);
+    persist.mutate({ sheet: next });
+  };
+
+  const toggleFieldWidth = (id: string) => {
+    const next = tabs.map((t) =>
+      t.id === activeTabId
+        ? {
+            ...t,
+            fields: t.fields.map((f) =>
+              f.id === id ? { ...f, width: fieldWidth(f) === 2 ? 1 : 2 } : f,
+            ),
+          }
+        : t,
     );
     setTabs(next);
     persist.mutate({ sheet: next });
@@ -464,18 +509,23 @@ export function CharacterSheetEditor({
                   </p>
                 )}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {fields.map((field) => (
+                  {fields.map((field, i) => (
                     <div
                       key={field.id}
-                      className={field.type === "section" ? "sm:col-span-2" : undefined}
+                      className={fieldWidth(field) === 2 ? "sm:col-span-2" : undefined}
                     >
                       <FieldRow
                         field={field}
                         canEdit={canEdit}
+                        isFirst={i === 0}
+                        isLast={i === fields.length - 1}
                         onChange={(patch) => updateField(field.id, patch)}
                         onBlurSave={() => persist.mutate({ sheet: tabs })}
                         onRemove={() => removeField(field.id)}
                         onRoll={() => roll(field)}
+                        onMoveUp={() => moveField(field.id, -1)}
+                        onMoveDown={() => moveField(field.id, 1)}
+                        onToggleWidth={() => toggleFieldWidth(field.id)}
                       />
                     </div>
                   ))}
@@ -524,17 +574,27 @@ export function CharacterSheetEditor({
 function FieldRow({
   field,
   canEdit,
+  isFirst,
+  isLast,
   onChange,
   onBlurSave,
   onRemove,
   onRoll,
+  onMoveUp,
+  onMoveDown,
+  onToggleWidth,
 }: {
   field: SheetField;
   canEdit: boolean;
+  isFirst: boolean;
+  isLast: boolean;
   onChange: (patch: Partial<SheetField>) => void;
   onBlurSave: () => void;
   onRemove: () => void;
   onRoll: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onToggleWidth: () => void;
 }) {
   if (field.type === "section") {
     return (
@@ -552,7 +612,18 @@ function FieldRow({
           </span>
         )}
         <div className="h-px flex-1 bg-primary/15" />
-        {canEdit && <RemoveBtn onRemove={onRemove} />}
+        {canEdit && (
+          <FieldToolbar
+            isFirst={isFirst}
+            isLast={isLast}
+            width={fieldWidth(field)}
+            showWidthToggle={false}
+            onMoveUp={onMoveUp}
+            onMoveDown={onMoveDown}
+            onToggleWidth={onToggleWidth}
+            onRemove={onRemove}
+          />
+        )}
       </div>
     );
   }
@@ -572,7 +643,18 @@ function FieldRow({
             {field.label}
           </span>
         )}
-        {canEdit && <RemoveBtn onRemove={onRemove} />}
+        {canEdit && (
+          <FieldToolbar
+            isFirst={isFirst}
+            isLast={isLast}
+            width={fieldWidth(field)}
+            showWidthToggle
+            onMoveUp={onMoveUp}
+            onMoveDown={onMoveDown}
+            onToggleWidth={onToggleWidth}
+            onRemove={onRemove}
+          />
+        )}
       </div>
 
       {field.type === "text" && (
@@ -696,14 +778,71 @@ function FieldRow({
   );
 }
 
-function RemoveBtn({ onRemove }: { onRemove: () => void }) {
+// Visible by default; only fades to hover-only on pointer-fine devices
+// (md:opacity-0 md:group-hover:opacity-100). On touch there's no hover
+// event to reveal it, so opacity-0 there would make it permanently
+// unreachable — the exact bug already fixed in BlockEditor/GrimoireSidebar,
+// applied here too.
+function FieldToolbar({
+  isFirst,
+  isLast,
+  width,
+  showWidthToggle,
+  onMoveUp,
+  onMoveDown,
+  onToggleWidth,
+  onRemove,
+}: {
+  isFirst: boolean;
+  isLast: boolean;
+  width: 1 | 2;
+  showWidthToggle: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onToggleWidth: () => void;
+  onRemove: () => void;
+}) {
   return (
-    <button
-      onClick={onRemove}
-      aria-label="Remover campo"
-      className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
-    >
-      <Trash2 className="size-3.5" />
-    </button>
+    <div className="ml-auto flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
+      {showWidthToggle && (
+        <button
+          type="button"
+          onClick={onToggleWidth}
+          title={width === 2 ? "Ocupar 1 coluna" : "Ocupar 2 colunas"}
+          className="grid h-5 min-w-5 place-items-center rounded px-1 text-[9px] font-semibold text-muted-foreground hover:bg-primary/10 hover:text-primary"
+        >
+          {width === 2 ? "2c" : "1c"}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onMoveUp}
+        disabled={isFirst}
+        title="Mover para cima"
+        aria-label="Mover campo para cima"
+        className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-20"
+      >
+        <ChevronUp className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={onMoveDown}
+        disabled={isLast}
+        title="Mover para baixo"
+        aria-label="Mover campo para baixo"
+        className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-20"
+      >
+        <ChevronDown className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={onRemove}
+        title="Remover campo"
+        aria-label="Remover campo"
+        className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+      >
+        <Trash2 className="size-3.5" />
+      </button>
+    </div>
   );
 }
