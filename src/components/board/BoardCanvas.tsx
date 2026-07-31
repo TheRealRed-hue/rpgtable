@@ -1518,7 +1518,7 @@ function ObjectViewImpl({
             }`}
             style={commonHandleProps.style}
           >
-            {linkedCharacter?.portrait_path && imgUrl ? (
+            {imgUrl ? (
               <img src={imgUrl} alt="" className="h-full w-full object-cover" draggable={false} />
             ) : (
               <span className="grimoire-title text-sm text-primary">
