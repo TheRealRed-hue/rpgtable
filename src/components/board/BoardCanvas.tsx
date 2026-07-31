@@ -729,7 +729,12 @@ export function BoardCanvas({
           position: "absolute",
           inset: 0,
           mixBlendMode: "screen",
-          backgroundImage: `radial-gradient(circle at ${x}px ${y}px, white 0%, transparent ${l.radius}px)`,
+          // Old curve faded linearly from the very center (white 0% straight
+          // to transparent at the radius), so even the middle of a light's
+          // radius was already dimmed — reads as "weak" even at full radius.
+          // Keeping it fully bright out to ~55% before fading gives a real
+          // lit core, with the falloff only doing its job near the edge.
+          backgroundImage: `radial-gradient(circle at ${x}px ${y}px, white 0px, white ${l.radius * 0.55}px, transparent ${l.radius}px)`,
         };
         if (l.shape === "cone") {
           // My angle convention is 0°=east, clockwise (matches atan2 on
@@ -754,7 +759,7 @@ export function BoardCanvas({
       zIndex: 5000,
       mixBlendMode: "multiply",
       isolation: "isolate",
-      opacity: 0.9,
+      opacity: 0.85,
       backgroundColor: "var(--ink)",
     }),
     [boardBounds],
