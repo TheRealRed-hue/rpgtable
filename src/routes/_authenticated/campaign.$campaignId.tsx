@@ -906,6 +906,7 @@ function CampaignPage() {
           <BoardCanvas
             objects={objects}
             characters={characters}
+            files={files}
             isMaster={isMaster}
             currentUserId={userId}
             onDropFromSidebar={handleDropFromSidebar}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
-import type { BoardObject, Character } from "@/lib/board-types";
+import type { BoardObject, Character, FileRow } from "@/lib/board-types";
 import { normalizeSheet, type NumberField, type ResourceField } from "@/lib/character-sheet-types";
 import { getBoardTheme, themeCssVars } from "@/lib/board-themes";
 import { supabase } from "@/integrations/supabase/client";
@@ -46,6 +46,10 @@ interface Props {
   /** Same idea as onObjectMove, but for width/height after a corner-handle resize. */
   onObjectResize?: (id: string, width: number, height: number) => void;
   characters?: Character[];
+  /** Campaign's archived files — used by the pin properties panel to let
+   * the master pick an already-uploaded gallery image for a pin's portrait,
+   * as an alternative to linking a character or pasting an external URL. */
+  files?: FileRow[];
   onDropCharacterFromSidebar?: (characterId: string, worldX: number, worldY: number) => void;
   onOpenCharacter?: (character: Character) => void;
   /** Effective preset id for this viewer — the player's personal override
@@ -130,6 +134,7 @@ export function BoardCanvas({
   onObjectMove,
   onObjectResize,
   characters = [],
+  files = [],
   onDropCharacterFromSidebar,
   onOpenCharacter,
   themeId,
@@ -876,6 +881,7 @@ export function BoardCanvas({
         <PinPropertiesPanel
           obj={editingObj}
           characters={characters}
+          files={files}
           onClose={() => setEditingId(null)}
           onUpdateObject={onUpdateObject}
           onResizeCommit={commitObjectResize}
@@ -1098,11 +1104,23 @@ function ObjectViewImpl({
 
   useEffect(() => {
     let cancelled = false;
-    const data = (obj.data ?? {}) as { storage_path?: string };
+    const data = (obj.data ?? {}) as { storage_path?: string; image_url?: string };
+    // A pin can carry its own image two ways — a chosen file from the
+    // campaign's gallery (data.storage_path, same as map/image objects) or a
+    // pasted external URL (data.image_url) — and either one takes priority
+    // over the linked character's portrait, since setting a custom image is
+    // a deliberate override.
     const portraitPath = obj.kind === "pin" ? linkedCharacter?.portrait_path : undefined;
-    const path = (obj.kind === "map" || obj.kind === "image") && data.storage_path
+    const path = (obj.kind === "map" || obj.kind === "image" || obj.kind === "pin") && data.storage_path
       ? data.storage_path
       : portraitPath;
+    if (obj.kind === "pin" && data.image_url && !data.storage_path) {
+      // External URLs are used as-is — no Storage bucket to sign.
+      setImgUrl(data.image_url);
+      return () => {
+        cancelled = true;
+      };
+    }
     if (path) {
       supabase.storage
         .from("campaign-assets")
@@ -1760,6 +1778,32 @@ function objectViewPropsEqual(
 
 const ObjectView = memo(ObjectViewImpl, objectViewPropsEqual);
 
+// Small thumbnail for the pin image gallery picker — resolves its own
+// signed URL lazily so opening the picker doesn't sign every archived file
+// up front, only the ones actually shown.
+function GalleryThumb({ path, name }: { path: string | null; name: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!path) {
+      setUrl(null);
+      return;
+    }
+    supabase.storage
+      .from("campaign-assets")
+      .createSignedUrl(path, 60 * 60)
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        if (data?.signedUrl) setUrl(data.signedUrl);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+  if (!url) return <div className="size-full animate-pulse bg-primary/10" />;
+  return <img src={url} alt={name} className="size-full object-cover" />;
+}
+
 // A pin's full property editor — opened by double-clicking it (master
 // only). The old floating toolbar only had room for a handful of icon
 // buttons; this gives every pin property its own labeled control in one
@@ -1768,6 +1812,7 @@ const ObjectView = memo(ObjectViewImpl, objectViewPropsEqual);
 function PinPropertiesPanel({
   obj,
   characters,
+  files,
   onClose,
   onUpdateObject,
   onResizeCommit,
@@ -1781,6 +1826,7 @@ function PinPropertiesPanel({
 }: {
   obj: BoardObject;
   characters: Character[];
+  files: FileRow[];
   onClose: () => void;
   onUpdateObject?: (obj: BoardObject, patch: Partial<BoardObject>) => void;
   onResizeCommit: (obj: BoardObject, width: number, height: number) => void;
@@ -1812,6 +1858,48 @@ function PinPropertiesPanel({
     const next = label.trim();
     if (next !== (obj.label ?? "")) onUpdateObject?.(obj, { label: next || null });
   };
+
+  const imgData = (obj.data ?? {}) as { storage_path?: string; image_url?: string };
+  const [imageUrlInput, setImageUrlInput] = useState(imgData.image_url ?? "");
+  const [showGalleryPicker, setShowGalleryPicker] = useState(false);
+  useEffect(() => {
+    if (document.activeElement?.id !== `pin-image-url-${obj.id}`) {
+      setImageUrlInput(imgData.image_url ?? "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obj.id, imgData.image_url]);
+
+  const galleryImages = files.filter((f) => f.kind === "image" || f.kind === "map");
+
+  const applyImageUrl = () => {
+    const url = imageUrlInput.trim();
+    const nextData = { ...(obj.data as Record<string, unknown> | null) };
+    if (url) {
+      nextData.image_url = url;
+      delete nextData.storage_path;
+    } else {
+      delete nextData.image_url;
+    }
+    onUpdateObject?.(obj, { data: nextData as never });
+  };
+
+  const pickGalleryImage = (path: string) => {
+    const nextData = { ...(obj.data as Record<string, unknown> | null), storage_path: path };
+    delete nextData.image_url;
+    setImageUrlInput("");
+    onUpdateObject?.(obj, { data: nextData as never });
+    setShowGalleryPicker(false);
+  };
+
+  const clearCustomImage = () => {
+    const nextData = { ...(obj.data as Record<string, unknown> | null) };
+    delete nextData.image_url;
+    delete nextData.storage_path;
+    setImageUrlInput("");
+    onUpdateObject?.(obj, { data: nextData as never });
+  };
+
+  const hasCustomImage = !!imgData.image_url || !!imgData.storage_path;
 
   return (
     <div
@@ -1893,6 +1981,74 @@ function PinPropertiesPanel({
               </option>
             ))}
           </select>
+        </div>
+
+        <div className="border-t border-primary/10 pt-3">
+          <div className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-widest text-muted-foreground">
+            <span>Imagem do pin</span>
+            {hasCustomImage && (
+              <button
+                onClick={clearCustomImage}
+                className="text-primary/70 underline-offset-2 hover:text-primary hover:underline"
+              >
+                Remover
+              </button>
+            )}
+          </div>
+          {/* A custom image (URL or gallery pick) overrides the linked
+              character's portrait — lets a pin show any art, even one with
+              no character sheet behind it (a monster, a prop, a landmark). */}
+          <p className="mb-2 text-[10px] leading-snug text-muted-foreground">
+            Sobrepõe o retrato do personagem vinculado, se houver.
+          </p>
+          <div className="mb-2 flex gap-1.5">
+            <input
+              id={`pin-image-url-${obj.id}`}
+              type="text"
+              value={imageUrlInput}
+              onChange={(e) => setImageUrlInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applyImageUrl();
+              }}
+              placeholder="Cole a URL de uma imagem"
+              className="w-full rounded border border-primary/20 bg-ink px-2 py-1.5 text-xs text-primary"
+            />
+            <button
+              onClick={applyImageUrl}
+              className="shrink-0 rounded px-2 py-1.5 text-xs ring-1 ring-primary/25 text-primary hover:bg-primary/15"
+            >
+              Usar
+            </button>
+          </div>
+          <button
+            onClick={() => setShowGalleryPicker((v) => !v)}
+            className="w-full rounded px-2 py-1.5 text-xs ring-1 ring-primary/20 text-muted-foreground hover:bg-primary/10"
+          >
+            {showGalleryPicker ? "Fechar galeria" : "Escolher da galeria…"}
+          </button>
+          {showGalleryPicker && (
+            <div className="scrollbar-arcane mt-2 grid max-h-40 grid-cols-4 gap-1.5 overflow-y-auto rounded border border-primary/15 bg-ink/60 p-1.5">
+              {galleryImages.length === 0 && (
+                <p className="col-span-4 py-2 text-center text-[10px] text-muted-foreground">
+                  Nenhuma imagem arquivada ainda.
+                </p>
+              )}
+              {galleryImages.map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => f.storage_path && pickGalleryImage(f.storage_path)}
+                  title={f.name}
+                  className={`aspect-square overflow-hidden rounded ring-1 ${
+                    imgData.storage_path === f.storage_path
+                      ? "ring-primary"
+                      : "ring-primary/15 hover:ring-primary/40"
+                  }`}
+                >
+                  <GalleryThumb path={f.storage_path} name={f.name} />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2">
