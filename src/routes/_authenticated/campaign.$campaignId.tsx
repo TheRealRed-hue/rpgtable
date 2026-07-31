@@ -21,6 +21,8 @@ import {
   PanelRightOpen,
   PanelRightClose,
   BookOpenText,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -839,6 +841,32 @@ function CampaignPage() {
             <BookOpenText className="size-3.5" aria-hidden="true" />
             <span className="hidden sm:inline">Grimório</span>
           </Link>
+
+          {/* The full "Mestre / Ver como jogador" toggle above only shows
+              from sm and up (it needs room for two labeled buttons) — this
+              is the same switch as a single icon button, so the view mode
+              stays reachable on phone-width screens too instead of just
+              disappearing. */}
+          {isOwner && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setViewAsPlayer((v) => !v)}
+              aria-pressed={viewAsPlayer}
+              title={viewAsPlayer ? "Ver como mestre" : "Ver como jogador"}
+              className={`sm:hidden ${
+                viewAsPlayer
+                  ? "bg-primary/15 text-primary"
+                  : "text-primary/80 hover:text-primary hover:bg-primary/10"
+              }`}
+            >
+              {viewAsPlayer ? (
+                <EyeOff className="size-4" aria-hidden="true" />
+              ) : (
+                <Eye className="size-4" aria-hidden="true" />
+              )}
+            </Button>
+          )}
 
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Users className="size-3.5" aria-hidden="true" />
