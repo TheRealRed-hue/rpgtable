@@ -155,10 +155,63 @@ export function BoardCanvas({
   onDuplicateObject,
 }: Props) {
   const theme = getBoardTheme(themeId);
+  // Canvas background (dot texture, and the tactical grid when shown) is
+  // painted entirely with CSS backgroundImage/backgroundPosition/
+  // backgroundSize on the root container instead of an absolutely-
+  // positioned child sized to a fixed world-space box. A repeating CSS
+  // pattern tiles forever no matter how far the viewport pans or zooms out
+  // — the old grid div (a fixed 6000×6000 box centered on the origin) ran
+  // out of squares once you scrolled past its edge, showing bare canvas
+  // beyond it. Grid layers are appended before the dot layers (order must
+  // match across backgroundImage/backgroundSize/backgroundPosition, which
+  // are comma-separated per layer) so the two call sites below — the JSX
+  // style prop and the direct DOM write during an active pan/pinch — always
+  // agree on layer count.
+  const getCanvasBackground = (v: Viewport, grid: boolean) => {
+    const dotImages = [
+      `radial-gradient(${theme.dot} 1px, transparent 1px)`,
+      `radial-gradient(oklch(0.25 0.02 60) 1px, transparent 1px)`,
+    ];
+    const dotSizes = [`${40 * v.scale}px ${40 * v.scale}px`, `${8 * v.scale}px ${8 * v.scale}px`];
+    const dotPosition = `${v.x}px ${v.y}px`;
+    if (!grid) {
+      return {
+        backgroundImage: dotImages.join(", "),
+        backgroundSize: dotSizes.join(", "),
+        backgroundPosition: `${dotPosition}, ${dotPosition}`,
+      };
+    }
+    const gridImages = [
+      "linear-gradient(to right, oklch(0.72 0.11 78 / 0.22) 1px, transparent 1px)",
+      "linear-gradient(to bottom, oklch(0.72 0.11 78 / 0.22) 1px, transparent 1px)",
+    ];
+    const gridSize = `${GRID_CELL_PX * v.scale}px ${GRID_CELL_PX * v.scale}px`;
+    return {
+      backgroundImage: [...gridImages, ...dotImages].join(", "),
+      backgroundSize: [gridSize, gridSize, ...dotSizes].join(", "),
+      backgroundPosition: [dotPosition, dotPosition, dotPosition, dotPosition].join(", "),
+    };
+  };
   const containerRef = useRef<HTMLDivElement>(null);
   const worldLayerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
   const [showGrid, setShowGrid] = useState(false);
+  // Used only to size the darkness overlay below (so it always covers what's
+  // actually on screen) — a generous default keeps the very first paint,
+  // before the ResizeObserver reports real numbers, from under-covering.
+  const [containerSize, setContainerSize] = useState({ width: 1600, height: 900 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        setContainerSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [isPanning, setIsPanning] = useState(false);
   // Reorder/lock/visibility controls used to only reveal on :hover, which
   // has no touch equivalent — tapping an object now selects it and keeps
@@ -280,8 +333,10 @@ export function BoardCanvas({
       worldLayerRef.current.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.scale})`;
     }
     if (containerRef.current) {
-      containerRef.current.style.backgroundSize = `${40 * v.scale}px ${40 * v.scale}px, ${8 * v.scale}px ${8 * v.scale}px`;
-      containerRef.current.style.backgroundPosition = `${v.x}px ${v.y}px`;
+      const bg = getCanvasBackground(v, showGrid);
+      containerRef.current.style.backgroundImage = bg.backgroundImage;
+      containerRef.current.style.backgroundSize = bg.backgroundSize;
+      containerRef.current.style.backgroundPosition = bg.backgroundPosition;
     }
   };
 
@@ -683,20 +738,20 @@ export function BoardCanvas({
   // The darkness overlay used to cover a fixed 6000px square centered on
   // the origin — fine for a small scene, but a token placed (or a map
   // panned to) further out than that sat outside the overlay entirely and
-  // showed up fully lit regardless of has_light/hidden_when_dark. Instead,
-  // size it from the actual extent of whatever is on the board, padded out
-  // generously so panning a bit past the edge still reads as dark, with a
-  // sane floor for an empty/near-empty scene.
+  // showed up fully lit regardless of has_light/hidden_when_dark. Sized
+  // from the actual extent of whatever is on the board, padded out
+  // generously so panning a bit past the edge still reads as dark — and
+  // also unioned with whatever's currently visible in the viewport, so
+  // zooming out or panning to an empty stretch of the board never outruns
+  // the overlay either (a sane floor still covers an empty/near-empty scene
+  // before the container has been measured).
   const BOUNDS_PADDING = 2000;
   const BOUNDS_MIN_SIZE = 6000;
   const boardBounds = useMemo(() => {
-    if (objects.length === 0) {
-      return { left: -BOUNDS_MIN_SIZE / 2, top: -BOUNDS_MIN_SIZE / 2, size: BOUNDS_MIN_SIZE };
-    }
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
+    let minX = -viewport.x / viewport.scale;
+    let minY = -viewport.y / viewport.scale;
+    let maxX = minX + containerSize.width / viewport.scale;
+    let maxY = minY + containerSize.height / viewport.scale;
     for (const o of objects) {
       const w = o.width;
       const h = o.kind === "pin" ? o.width : o.height;
@@ -709,7 +764,7 @@ export function BoardCanvas({
     const top = minY - BOUNDS_PADDING;
     const size = Math.max(maxX + BOUNDS_PADDING - left, maxY + BOUNDS_PADDING - top, BOUNDS_MIN_SIZE);
     return { left, top, size };
-  }, [objects]);
+  }, [objects, viewport, containerSize]);
 
   // Each light is its own layer (mix-blend-mode: screen unions it with the
   // others) instead of one flat stack of CSS background-images — a circle
@@ -781,9 +836,7 @@ export function BoardCanvas({
       style={{
         cursor: isPanning ? "grabbing" : "default",
         touchAction: "none",
-        backgroundImage: `radial-gradient(${theme.dot} 1px, transparent 1px), radial-gradient(oklch(0.25 0.02 60) 1px, transparent 1px)`,
-        backgroundSize: `${40 * viewport.scale}px ${40 * viewport.scale}px, ${8 * viewport.scale}px ${8 * viewport.scale}px`,
-        backgroundPosition: `${viewport.x}px ${viewport.y}px`,
+        ...getCanvasBackground(viewport, showGrid),
         ...themeCssVars(theme),
       }}
       data-canvas-bg="1"
@@ -796,22 +849,6 @@ export function BoardCanvas({
           transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
         }}
       >
-        {showGrid && (
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute"
-            style={{
-              left: -3000,
-              top: -3000,
-              width: 6000,
-              height: 6000,
-              backgroundImage:
-                "linear-gradient(to right, oklch(0.72 0.11 78 / 0.22) 1px, transparent 1px), linear-gradient(to bottom, oklch(0.72 0.11 78 / 0.22) 1px, transparent 1px)",
-              backgroundSize: `${GRID_CELL_PX}px ${GRID_CELL_PX}px`,
-            }}
-          />
-        )}
-
         {/* Dynamic light/vision — darkens everything for non-master viewers,
             with soft holes carved out around each light-emitting object.
             Master-toggleable per campaign via dynamicLighting ("day mode"
