@@ -161,11 +161,11 @@ export function CharacterPanel({
             key={c.id}
             draggable={!isMobile}
             onDragStart={isMobile ? undefined : (e) => onDragCharacter(e, c.id)}
-            onClick={() => (isMobile ? onAddCharacterToBoard?.(c.id) : onOpenCharacter(c))}
+            onClick={() => onOpenCharacter(c)}
             className={`group flex items-center gap-2 rounded px-2 py-1.5 text-xs text-muted-foreground hover:bg-primary/5 hover:text-primary ${
               isMobile ? "cursor-pointer active:bg-primary/10" : "cursor-grab"
             }`}
-            title={isMobile ? "Toque para adicionar à mesa" : "Arraste para a mesa · clique para abrir"}
+            title={isMobile ? "Toque para abrir a ficha" : "Arraste para a mesa · clique para abrir"}
           >
             <UserCircle2 className="size-4 shrink-0 text-primary/60" aria-hidden="true" />
             <span className="flex-1 truncate font-medium">{c.name}</span>
@@ -174,7 +174,19 @@ export function CharacterPanel({
                 NPC
               </span>
             )}
-            {!isMobile && (
+            {isMobile ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAddCharacterToBoard?.(c.id);
+                }}
+                aria-label="Adicionar à mesa"
+                title="Adicionar à mesa"
+                className="-m-1 shrink-0 rounded p-1 text-primary/70 active:bg-primary/10 active:text-primary"
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+              </button>
+            ) : (
               <button
                 onClick={(e) => {
                   e.stopPropagation();

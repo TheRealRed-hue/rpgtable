@@ -804,7 +804,7 @@ function FolderNode({
           <button
             onClick={() => onDeleteFolder(folder.id)}
             aria-label={`Remover pasta ${folder.name}`}
-            className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+            className="-m-1 rounded p-1 opacity-70 transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
             title="Remover"
           >
             <Trash2 className="size-3.5" aria-hidden="true" />
@@ -890,7 +890,7 @@ function FileNode({
             onDelete();
           }}
           aria-label={`Remover ${file.name}`}
-          className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+          className="-m-1 shrink-0 rounded p-1 opacity-70 transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
         >
           <Trash2 className="size-3" aria-hidden="true" />
         </button>

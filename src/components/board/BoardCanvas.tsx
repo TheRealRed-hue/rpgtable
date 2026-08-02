@@ -907,7 +907,7 @@ export function BoardCanvas({
       <div
         role="group"
         aria-label="Controles de zoom"
-        className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full bg-ink-2/90 p-1.5 ring-1 ring-primary/25 backdrop-blur-md shadow-xl"
+        className="absolute bottom-4 left-1/2 -translate-x-1/2 flex max-w-[calc(100vw-1.5rem)] items-center gap-1 overflow-x-auto rounded-full bg-ink-2/90 p-1.5 ring-1 ring-primary/25 backdrop-blur-md shadow-xl sm:bottom-6"
       >
         {isMaster && (
           <>
@@ -917,7 +917,7 @@ export function BoardCanvas({
               aria-label={showGrid ? "Ocultar grade de movimento" : "Mostrar grade de movimento"}
               aria-pressed={showGrid}
               title="Grade de movimento — 1 quadrado = 1,5m"
-              className={`h-8 w-8 p-0 hover:bg-primary/10 ${
+              className={`h-9 w-9 p-0 sm:h-8 sm:w-8 hover:bg-primary/10 ${
                 showGrid ? "text-primary bg-primary/15" : "text-primary/70"
               }`}
               onClick={() => setShowGrid((v) => !v)}
@@ -935,7 +935,7 @@ export function BoardCanvas({
                     ? "Modo noite ativo — escuridão e névoa de guerra ligadas para os jogadores"
                     : "Modo dia ativo — sem escuridão, tudo visível aos jogadores"
                 }
-                className={`h-8 w-8 p-0 hover:bg-primary/10 ${
+                className={`h-9 w-9 p-0 sm:h-8 sm:w-8 hover:bg-primary/10 ${
                   dynamicLighting ? "text-primary bg-primary/15" : "text-primary/70"
                 }`}
                 onClick={onToggleDynamicLighting}
@@ -961,7 +961,7 @@ export function BoardCanvas({
                   ? "Ferramenta de cadeado ativa — clique em um objeto para travar/destravar"
                   : "Ferramenta de cadeado — clique e depois clique nos objetos para travá-los/destravá-los, sem abrir a barrinha de cada um"
               }
-              className={`h-8 w-8 p-0 hover:bg-primary/10 ${
+              className={`h-9 w-9 p-0 sm:h-8 sm:w-8 hover:bg-primary/10 ${
                 lockToolActive ? "text-primary bg-primary/15" : "text-primary/70"
               }`}
               onClick={() => setLockToolActive((v) => !v)}
@@ -979,7 +979,7 @@ export function BoardCanvas({
           size="sm"
           variant="ghost"
           aria-label="Diminuir zoom"
-          className="h-8 w-8 p-0 text-primary hover:bg-primary/10"
+          className="h-9 w-9 p-0 sm:h-8 sm:w-8 text-primary hover:bg-primary/10"
           onClick={() => setViewport((v) => ({ ...v, scale: Math.max(0.25, v.scale - 0.15) }))}
         >
           <span aria-hidden="true">−</span>
@@ -996,7 +996,7 @@ export function BoardCanvas({
           size="sm"
           variant="ghost"
           aria-label="Aumentar zoom"
-          className="h-8 w-8 p-0 text-primary hover:bg-primary/10"
+          className="h-9 w-9 p-0 sm:h-8 sm:w-8 text-primary hover:bg-primary/10"
           onClick={() => setViewport((v) => ({ ...v, scale: Math.min(2.5, v.scale + 0.15) }))}
         >
           <span aria-hidden="true">+</span>
@@ -1910,8 +1910,11 @@ function PinPropertiesPanel({
     <div
       role="dialog"
       aria-label={`Propriedades de ${obj.label ?? "pin"}`}
-      className="gold-frame pointer-events-auto absolute top-4 right-4 bottom-4 z-40 flex w-72 flex-col overflow-hidden rounded-lg bg-ink-2/95 shadow-2xl backdrop-blur-md"
+      className="gold-frame pointer-events-auto absolute inset-x-0 bottom-0 top-auto z-40 flex max-h-[75vh] w-full flex-col overflow-hidden rounded-t-lg bg-ink-2/95 shadow-2xl backdrop-blur-md md:inset-x-auto md:top-4 md:right-4 md:bottom-4 md:max-h-none md:w-72 md:rounded-lg"
     >
+      {/* Small drag-style grabber, mobile-only — signals "this is a sheet,
+          not a full page" the way the rest of the app's bottom sheets do. */}
+      <div className="mx-auto mt-1.5 h-1 w-10 shrink-0 rounded-full bg-primary/20 md:hidden" aria-hidden="true" />
       <div className="flex items-center justify-between border-b border-primary/15 px-4 py-3">
         <h3 className="grimoire-title text-sm text-primary">Propriedades do pin</h3>
         <button

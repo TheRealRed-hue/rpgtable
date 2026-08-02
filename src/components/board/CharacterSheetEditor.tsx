@@ -352,7 +352,7 @@ export function CharacterSheetEditor({
                 )}
                 {canEdit && (
                   <>
-                    <div className="absolute inset-0 grid place-items-center bg-ink/0 opacity-0 transition-all group-hover:bg-ink/60 group-hover:opacity-100">
+                    <div className="absolute inset-0 grid place-items-center bg-ink/40 opacity-70 transition-all md:bg-ink/0 md:opacity-0 md:group-hover:bg-ink/60 md:group-hover:opacity-100">
                       {uploadingPortrait ? (
                         <Loader2 className="size-5 animate-spin text-cream" aria-hidden="true" />
                       ) : (
@@ -481,7 +481,7 @@ export function CharacterSheetEditor({
                     <button
                       onClick={() => removeTab(tab.id)}
                       aria-label={`Apagar aba ${tab.name}`}
-                      className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
+                      className="-m-1 rounded p-1 opacity-70 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 hover:text-destructive"
                     >
                       <X className="size-3" />
                     </button>
@@ -845,4 +845,4 @@ function FieldToolbar({
       </button>
     </div>
   );
-}
+} 
