@@ -105,3 +105,20 @@ export const SKILL_NODE_COLORS: Record<SkillNodeColor, { glow: string; label: st
 export interface SkillNodeEffect {
   text?: string;
 }
+
+// ---------- Board: area-of-effect markers ----------
+// A board_object with kind "aoe" reuses the light_shape/light_radius/
+// light_angle/light_cone_width columns for its geometry (see the migration
+// for why) — this is just the color palette, stored in the object's own
+// `data.color`.
+export type AoEShape = "circle" | "cone";
+
+export const AOE_COLORS: Record<string, { fill: string; label: string }> = {
+  fire: { fill: "oklch(0.63 0.19 35)", label: "Fogo" },
+  poison: { fill: "oklch(0.68 0.16 145)", label: "Veneno" },
+  ice: { fill: "oklch(0.68 0.12 220)", label: "Gelo" },
+  arcane: { fill: "oklch(0.6 0.18 300)", label: "Arcano" },
+  holy: { fill: "oklch(0.88 0.09 95)", label: "Sagrado" },
+};
+
+export const DEFAULT_AOE_COLOR = "fire";

@@ -23,6 +23,9 @@ import {
   BookOpenText,
   Eye,
   EyeOff,
+  Sparkles,
+  Circle,
+  Triangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -34,6 +37,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -717,6 +721,35 @@ function CampaignPage() {
     }
   };
 
+  const addAoe = async (shape: "circle" | "cone") => {
+    if (!isMaster || !userId) return;
+    try {
+      const { error } = await insertBoardObject({
+        campaign_id: campaignId,
+        kind: "aoe",
+        x: 400 + Math.random() * 200,
+        y: 300 + Math.random() * 200,
+        width: 240,
+        height: 240,
+        light_shape: shape,
+        // 3 grid squares (1.5m each) — a modest burst/cone to start; the
+        // master resizes it from the Sparkles popover once it's placed.
+        light_radius: 180,
+        light_angle: 0,
+        light_cone_width: 90,
+        z_index: nextZIndex(objects, 10),
+        data: { color: "fire" },
+        created_by: userId,
+      });
+      if (error) throw error;
+    } catch (err) {
+      console.error("Erro ao adicionar área de efeito:", err);
+      toast.error(
+        "Não foi possível adicionar a área: " + (err instanceof Error ? err.message : String(err)),
+      );
+    }
+  };
+
   // Fallback for mobile: native HTML5 drag-and-drop (used by the sidebar's
   // draggable file rows) has no touch equivalent in any mobile browser, so
   // ArchiveSidebar calls this on tap instead of drag when isMobile is true.
@@ -830,6 +863,43 @@ function CampaignPage() {
                 </form>
               </DialogContent>
             </Dialog>
+          )}
+
+          {isMaster && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-primary/80 hover:text-primary hover:bg-primary/10"
+                >
+                  <Sparkles className="mr-1.5 size-3.5" aria-hidden="true" />
+                  <span className="hidden sm:inline">Área de efeito</span>
+                  <span className="sm:hidden">Área</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="gold-frame w-48 bg-ink-2/95 p-2">
+                <p className="mb-2 px-1 text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Marcar área de ataque
+                </p>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => addAoe("circle")}
+                    className="flex flex-1 flex-col items-center gap-1 rounded px-2 py-2 text-xs text-primary ring-1 ring-primary/20 hover:bg-primary/10"
+                  >
+                    <Circle className="size-4" aria-hidden="true" />
+                    Círculo
+                  </button>
+                  <button
+                    onClick={() => addAoe("cone")}
+                    className="flex flex-1 flex-col items-center gap-1 rounded px-2 py-2 text-xs text-primary ring-1 ring-primary/20 hover:bg-primary/10"
+                  >
+                    <Triangle className="size-4 rotate-90" aria-hidden="true" />
+                    Cone
+                  </button>
+                </div>
+              </PopoverContent>
+            </Popover>
           )}
 
           <Link
@@ -949,6 +1019,11 @@ function CampaignPage() {
             onRemoveObject={handleRemoveObject}
             onEditDocument={handleEditDocument}
             onSetLight={handleSetLight}
+            onSetAoeData={(obj, patch) =>
+              handleUpdateObject(obj, {
+                data: { ...(obj.data && typeof obj.data === "object" ? obj.data : {}), ...patch },
+              })
+            }
             onLinkCharacter={handleLinkCharacter}
             onRotateOwnLight={handleRotateOwnLight}
             dynamicLighting={campaign?.dynamic_lighting ?? true}

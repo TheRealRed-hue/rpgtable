@@ -1,0 +1,23 @@
+-- ============================================================
+-- AREA-OF-EFFECT MARKERS (attack telegraphs)
+-- ============================================================
+-- A new board_object kind the master drops on the table to show where an
+-- attack is about to land — a circle burst or a directional cone, grid-
+-- snapped, that stays on the board until the master removes it (same
+-- lifecycle as a pin).
+--
+-- Deliberately reuses the geometry columns already added for vision cones
+-- instead of adding new ones: light_shape/light_radius/light_angle/
+-- light_cone_width already describe "circle or cone, this big, facing this
+-- way" regardless of whether the object actually emits light, and the
+-- rotate-to-aim handle built for those is reused as-is. has_light stays
+-- false for every AoE object, so lightSources (which filters strictly on
+-- has_light — see BoardCanvas.tsx) never treats these as real light
+-- sources; they're purely visual telegraphs. The fill color is stored in
+-- `data.color` (no schema needed, board_objects.data is already a
+-- free-form JSONB column) — see AOE_COLORS in board-types.ts.
+--
+-- ADD VALUE runs alone in this file (nothing here reads the new value) —
+-- older Postgres versions can't use an enum value added earlier in the same
+-- transaction, so keeping this migration single-purpose sidesteps that.
+ALTER TYPE public.board_object_kind ADD VALUE 'aoe';

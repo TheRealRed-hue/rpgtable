@@ -701,7 +701,7 @@ export type Database = {
       };
     };
     Enums: {
-      board_object_kind: "map" | "pin" | "sheet" | "document" | "image";
+      board_object_kind: "map" | "pin" | "sheet" | "document" | "image" | "aoe";
       file_kind: "document" | "image" | "map";
       member_role: "master" | "player";
     };
@@ -825,7 +825,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      board_object_kind: ["map", "pin", "sheet", "document", "image"],
+      board_object_kind: ["map", "pin", "sheet", "document", "image", "aoe"],
       file_kind: ["document", "image", "map"],
       member_role: ["master", "player"],
     },

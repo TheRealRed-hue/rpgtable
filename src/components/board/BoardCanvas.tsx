@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
-import type { BoardObject, Character, FileRow } from "@/lib/board-types";
+import { AOE_COLORS, DEFAULT_AOE_COLOR, type BoardObject, type Character, type FileRow } from "@/lib/board-types";
 import { normalizeSheet, type NumberField, type ResourceField } from "@/lib/character-sheet-types";
 import { getBoardTheme, themeCssVars } from "@/lib/board-themes";
 import { supabase } from "@/integrations/supabase/client";
@@ -21,6 +21,9 @@ import {
   Sun,
   Moon,
   Copy,
+  Sparkles,
+  Circle,
+  Triangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -75,6 +78,10 @@ interface Props {
       "has_light" | "light_radius" | "hidden_when_dark" | "light_shape" | "light_angle" | "light_cone_width"
     >>,
   ) => void;
+  /** Merges into an AoE marker's `data` (currently just `{ color }`) — kept
+   * separate from onSetLight since it writes a JSONB column, not the
+   * light_* columns the two share for shape/radius/angle. */
+  onSetAoeData?: (obj: BoardObject, patch: { color?: string }) => void;
   /** Cache-only patch for a player rotating their own token's cone — the
    * actual write goes through the rotate_own_light RPC (see startObjRotate),
    * this just keeps the UI from flashing back before Realtime confirms it. */
@@ -144,6 +151,7 @@ export function BoardCanvas({
   onRemoveObject,
   onEditDocument,
   onSetLight,
+  onSetAoeData,
   onLinkCharacter,
   onRotateOwnLight,
   dynamicLighting = true,
@@ -678,8 +686,8 @@ export function BoardCanvas({
     const rect = container.getBoundingClientRect();
     const w = obj.width || 80;
     const h = obj.kind === "pin" ? w : obj.height || 80;
-    const cx = obj.x + w / 2;
-    const cy = obj.y + h / 2;
+    const cx = obj.kind === "aoe" ? obj.x : obj.x + w / 2;
+    const cy = obj.kind === "aoe" ? obj.y : obj.y + h / 2;
     setViewport((v) => ({
       x: rect.width / 2 - cx * v.scale,
       y: rect.height / 2 - cy * v.scale,
@@ -698,10 +706,13 @@ export function BoardCanvas({
   // was rebuilding the whole light map — and, worse, the darkness overlay's
   // gradient string below — on every single render.
   const getObjectCenter = useCallback(
-    (o: BoardObject) => ({
-      cx: o.x + o.width / 2,
-      cy: o.y + (o.kind === "pin" ? o.width : o.height) / 2,
-    }),
+    (o: BoardObject) =>
+      o.kind === "aoe"
+        ? { cx: o.x, cy: o.y }
+        : {
+            cx: o.x + o.width / 2,
+            cy: o.y + (o.kind === "pin" ? o.width : o.height) / 2,
+          },
     [],
   );
   const lightSources = useMemo(
@@ -878,6 +889,7 @@ export function BoardCanvas({
               onRemoveObject={onRemoveObject}
               onEditDocument={onEditDocument}
               onSetLight={onSetLight}
+              onSetAoeData={onSetAoeData}
               onLinkCharacter={onLinkCharacter}
               isDragging={dragObj?.id === o.id}
               showGrid={showGrid}
@@ -1065,6 +1077,7 @@ function ObjectViewImpl({
   onRemoveObject,
   onEditDocument,
   onSetLight,
+  onSetAoeData,
   onLinkCharacter,
   lockToolActive = false,
   isEditing = false,
@@ -1101,6 +1114,7 @@ function ObjectViewImpl({
       "has_light" | "light_radius" | "hidden_when_dark" | "light_shape" | "light_angle" | "light_cone_width"
     >>,
   ) => void;
+  onSetAoeData?: (obj: BoardObject, patch: { color?: string }) => void;
   onLinkCharacter?: (obj: BoardObject, characterId: string | null) => void;
   /** Bottom-toolbar lock tool armed by the master — keeps a locked object
    * clickable (instead of pass-through, see lockedPassThrough below) so it
@@ -1289,7 +1303,7 @@ function ObjectViewImpl({
         )}
       </button>
       )}
-      {isMaster && (
+      {isMaster && obj.kind !== "aoe" && (
       <Popover>
         <PopoverTrigger asChild>
           <button
@@ -1418,6 +1432,103 @@ function ObjectViewImpl({
         </PopoverContent>
       </Popover>
       )}
+      {/* Area-of-effect telegraph settings — shape/radius/cone width reuse
+          the same light_* columns and Slider widgets as the popover above
+          (see the migration comment for why), just with a color swatch
+          picker instead of an "emits light" toggle, since an AoE marker
+          never actually casts light (has_light stays false). */}
+      {isMaster && obj.kind === "aoe" && (
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            aria-label="Configurar área de efeito"
+            title="Área de efeito"
+            className="grid h-7 w-7 place-items-center rounded bg-ink-2/95 ring-1 ring-primary/25 text-primary hover:bg-primary/20"
+          >
+            <Sparkles className="size-3.5" aria-hidden="true" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="gold-frame w-56 bg-ink-2/95 p-3">
+          <div className="mb-3">
+            <span className="mb-1 block text-[10px] text-muted-foreground">Formato</span>
+            <div className="flex gap-1.5">
+              <button
+                onClick={() => onSetLight?.(obj, { light_shape: "circle" })}
+                className={`flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-xs ring-1 ${
+                  obj.light_shape === "circle"
+                    ? "bg-primary/25 ring-primary/50 text-primary"
+                    : "ring-primary/20 text-muted-foreground hover:bg-primary/10"
+                }`}
+              >
+                <Circle className="size-3" aria-hidden="true" /> Círculo
+              </button>
+              <button
+                onClick={() => onSetLight?.(obj, { light_shape: "cone" })}
+                className={`flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-xs ring-1 ${
+                  obj.light_shape === "cone"
+                    ? "bg-primary/25 ring-primary/50 text-primary"
+                    : "ring-primary/20 text-muted-foreground hover:bg-primary/10"
+                }`}
+              >
+                <Triangle className="size-3 rotate-90" aria-hidden="true" /> Cone
+              </button>
+            </div>
+          </div>
+          <div className="mb-3">
+            <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+              <span>Raio (grade: {Math.round(obj.light_radius / GRID_CELL_PX)} quadrados)</span>
+              <span>{obj.light_radius}px</span>
+            </div>
+            <Slider
+              defaultValue={[obj.light_radius]}
+              min={GRID_CELL_PX}
+              max={GRID_CELL_PX * 20}
+              step={GRID_CELL_PX / 2}
+              onValueCommit={([v]) =>
+                onSetLight?.(obj, { light_radius: Math.round(v / GRID_CELL_PX) * GRID_CELL_PX })
+              }
+            />
+          </div>
+          {obj.light_shape === "cone" && (
+            <div className="mb-3">
+              <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                <span>Abertura do cone</span>
+                <span>{obj.light_cone_width}°</span>
+              </div>
+              <Slider
+                defaultValue={[obj.light_cone_width]}
+                min={15}
+                max={180}
+                step={5}
+                onValueCommit={([v]) => onSetLight?.(obj, { light_cone_width: v })}
+              />
+              <p className="mt-1 text-[10px] italic text-muted-foreground">
+                Arraste o pontinho dourado para girar a direção.
+              </p>
+            </div>
+          )}
+          <div>
+            <span className="mb-1 block text-[10px] text-muted-foreground">Cor</span>
+            <div className="flex gap-1.5">
+              {Object.entries(AOE_COLORS).map(([key, c]) => (
+                <button
+                  key={key}
+                  onClick={() => onSetAoeData?.(obj, { color: key })}
+                  aria-label={c.label}
+                  title={c.label}
+                  className={`size-6 rounded-full ring-2 transition-transform ${
+                    ((obj.data as { color?: string } | null)?.color ?? DEFAULT_AOE_COLOR) === key
+                      ? "scale-110 ring-primary"
+                      : "ring-transparent hover:scale-105"
+                  }`}
+                  style={{ backgroundColor: c.fill }}
+                />
+              ))}
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
+      )}
       {isMaster && (
       <button
         onClick={() => onReorder?.(obj, "back")}
@@ -1523,10 +1634,37 @@ function ObjectViewImpl({
       </div>
     );
 
+  // AoE cone: same rotate-the-anchor mechanism as a pin's facing handle
+  // (same anchor id, same onRotateStart → startObjRotate flow, which is why
+  // this doesn't need its own pointer-drag logic) — just without the facing
+  // wedge, since the cone's own conic-gradient fill already shows which way
+  // it points. Positioned at the cone's own radius rather than a token's
+  // half-width, so the handle always sits right on the rim.
+  const aoeRotateHandle =
+    obj.kind === "aoe" && obj.light_shape === "cone" && !obj.locked && canControl && (
+      <div
+        id={`bo-${obj.id}-light-anchor`}
+        className="pointer-events-none absolute inset-0"
+        style={{ transform: `rotate(${obj.light_angle}deg)` }}
+      >
+        <div
+          onPointerDown={(e) => onRotateStart?.(obj, e)}
+          role="presentation"
+          aria-label="Girar direção da área de efeito"
+          title="Arraste para girar a direção"
+          className="pointer-events-auto absolute top-1/2 left-1/2 size-4 -translate-y-1/2 cursor-grab rounded-full bg-amber-300 ring-2 ring-ink-2"
+          style={{ transform: `translateX(${obj.light_radius + 14}px)`, touchAction: "none" }}
+        />
+      </div>
+    );
+
   const style: React.CSSProperties = {
-    transform: `translate(${obj.x}px, ${obj.y}px)${isDragging ? " scale(1.03)" : ""}`,
-    width: obj.width,
-    height: obj.kind === "pin" ? undefined : obj.height,
+    transform:
+      obj.kind === "aoe"
+        ? `translate(${obj.x - obj.light_radius}px, ${obj.y - obj.light_radius}px)${isDragging ? " scale(1.03)" : ""}`
+        : `translate(${obj.x}px, ${obj.y}px)${isDragging ? " scale(1.03)" : ""}`,
+    width: obj.kind === "aoe" ? obj.light_radius * 2 : obj.width,
+    height: obj.kind === "pin" ? undefined : obj.kind === "aoe" ? obj.light_radius * 2 : obj.height,
     zIndex: isDragging ? 9999 : obj.z_index,
     opacity: !obj.visible_to_players && isMaster ? 0.55 : 1,
     boxShadow: isDragging ? "0 12px 28px -8px oklch(0 0 0 / 0.55)" : undefined,
@@ -1583,6 +1721,49 @@ function ObjectViewImpl({
             {linkedCharacter?.name ?? obj.label}
           </div>
         )}
+      </div>
+    );
+  }
+
+  if (obj.kind === "aoe") {
+    const aoeData = (obj.data ?? {}) as { color?: string };
+    const aoeColor =
+      AOE_COLORS[aoeData.color ?? DEFAULT_AOE_COLOR]?.fill ?? AOE_COLORS[DEFAULT_AOE_COLOR].fill;
+    // Same conic-gradient-as-mask trick the light system uses for cones
+    // (see lightLayers above) — but "at 50% 50%" instead of a pixel offset,
+    // since this element is always exactly sized to its own 2×radius box
+    // with the vertex dead center, unlike the shared darkness overlay.
+    const coneMask =
+      obj.light_shape === "cone"
+        ? `conic-gradient(from ${(((obj.light_angle - obj.light_cone_width / 2 + 90) % 360) + 360) % 360}deg at 50% 50%, white 0deg, white ${obj.light_cone_width}deg, transparent ${obj.light_cone_width}deg, transparent 360deg)`
+        : undefined;
+    const shapeRadius = obj.light_shape === "cone" ? 0 : 9999;
+    return (
+      <div id={`bo-${obj.id}`} className="board-object-in group absolute top-0 left-0" style={style}>
+        {controls}
+        <div
+          {...commonHandleProps}
+          aria-label={obj.label || "Área de efeito"}
+          className="aoe-pulse absolute inset-0 cursor-grab"
+          style={{
+            ...commonHandleProps.style,
+            borderRadius: shapeRadius,
+            backgroundColor: aoeColor,
+            maskImage: coneMask,
+            WebkitMaskImage: coneMask,
+          }}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{
+            borderRadius: shapeRadius,
+            boxShadow: `inset 0 0 0 2px ${aoeColor}`,
+            maskImage: coneMask,
+            WebkitMaskImage: coneMask,
+          }}
+        />
+        {aoeRotateHandle}
       </div>
     );
   }

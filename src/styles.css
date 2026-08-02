@@ -240,3 +240,24 @@
   scrollbar-width: thin;
   scrollbar-color: oklch(0.72 0.11 78 / 0.25) transparent;
 }
+
+/* AoE telegraph fill — opacity/transform only (unlike candle-flicker's
+   box-shadow animation above), so it's compositor-only and doesn't force a
+   repaint every frame even with several markers pulsing on the board at
+   once. Still frozen on touch devices for the same reason candle-glow is:
+   one less thing repainting behind a moving finger. */
+@utility aoe-pulse {
+  animation: aoe-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes aoe-pulse {
+  0%, 100% { opacity: 0.28; transform: scale(0.99); }
+  50%      { opacity: 0.42; transform: scale(1.01); }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .aoe-pulse {
+    animation: none;
+    opacity: 0.34;
+  }
+}
